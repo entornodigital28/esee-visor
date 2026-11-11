@@ -44,6 +44,11 @@
   #single.rec #rec { display:flex; }
   #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd, #single.rec #mic { display:none !important; }
   #top .btn.live { background:#e5484d; border-color:#e5484d; color:#fff; }
+  #micCfg { position:absolute; right:max(12px,env(safe-area-inset-right)); top:calc(max(12px,env(safe-area-inset-top)) + 46px); display:none; flex-wrap:wrap; justify-content:flex-end; gap:6px; align-items:center; background:var(--glass); padding:6px 8px; border-radius:12px; font-size:13px; max-width:calc(100vw - 24px); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  #micCfg .btn { height:34px; min-width:34px; padding:0 9px; font-size:13px; border-radius:9px; touch-action:manipulation; }
+  #micCfg b { min-width:14px; text-align:center; }
+  #micLevel { width:54px; height:8px; border-radius:4px; background:#262c34; overflow:hidden; }
+  #micLevel i { display:block; height:100%; width:0; background:#4ade80; }
   #rec .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   #rec .sp { flex:1; }
   .btn.sm { height:40px; min-width:40px; padding:0 11px; font-size:13px; border-radius:10px; touch-action:manipulation; }
@@ -83,6 +88,12 @@
     <button class="btn" id="pip" style="display:none">PiP</button>
     <button class="btn" id="hd">HD</button>
     <button class="btn" id="back" title="Volver">✕</button>
+  </div>
+  <div id="micCfg">
+    <div id="micLevel" title="Nivel del micrófono"><i></i></div>
+    <span>Sensibilidad</span><button class="btn" id="msDown">−</button><b id="msVal">3</b><button class="btn" id="msUp">+</button>
+    <button class="btn" id="msDuck"></button>
+    <button class="btn" id="msMode"></button>
   </div>
   <div id="zoom" class="ui">
     <span>Zoom</span>
@@ -411,7 +422,10 @@ async function micStart() {
       if (!mic.out.length) return;
       const batch = new Uint8Array(mic.out); mic.out = [];
       const rms = Math.sqrt(energy / Math.max(1, samples)); energy = 0; samples = 0;
-      const loud = rms > Math.max(0.02, floor * 3);
+      const o = micOpts(), thr = MIC_THR[o.sens - 1];
+      $('#micLevel i').style.width = Math.min(100, Math.round(rms / (thr * 2) * 100)) + '%'; // la mitad de la barra = umbral
+      $('#micLevel i').style.background = rms > thr ? '#4ade80' : '#64748b';
+      const loud = o.always || rms > Math.max(thr, floor * 2.5);
       if (!loud) floor = floor * 0.9 + rms * 0.1; // ruido de fondo
       const now = Date.now();
       if (loud) quietSince = 0; else if (!quietSince) quietSince = now;
@@ -422,11 +436,12 @@ async function micStart() {
         if (!was && prev) { body = new Uint8Array(prev.length + batch.length); body.set(prev); body.set(batch, prev.length); } // no comerse el arranque
         fetch('/api/talk?ch=' + mic.ch, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body }).catch(() => {});
       }
-      if (speaking !== was) { if (sound.gain) sound.gain.gain.value = speaking ? 0 : 1.6; micLabel(speaking ? 'Hablando' : 'Cortar', true); } // evitar acople
+      if (sound.gain) sound.gain.gain.value = speaking && o.duck ? 0 : 1.6; // evitar acople
+      if (speaking !== was) micLabel(speaking ? 'Hablando' : 'Cortar', true);
       prev = batch;
     }, 200);
     mic.limit = setTimeout(micStop, 300000); // corte de seguridad a los 5 minutos
-    micLabel('Cortar', true);
+    micLabel('Cortar', true); micCfgShow(true);
   } catch (e) {
     micCleanup();
     micLabel(e.name === 'NotAllowedError' ? 'Sin permiso' : 'Sin micrófono', false);
@@ -446,8 +461,27 @@ function micStop() {
   mic.on = false; micCleanup();
   fetch('/api/talk?ch=' + mic.ch + '&stop=1', { method: 'POST' }).catch(() => {});
   if (sound.gain) sound.gain.gain.value = 1.6;
-  micLabel('Hablar', false);
+  micLabel('Hablar', false); micCfgShow(false);
 }
+// Ajustes de "Hablar", guardados en cada dispositivo (cada micrófono es distinto)
+const MIC_THR = [0.06, 0.035, 0.02, 0.011, 0.005]; // sensibilidad 1 (solo voz fuerte) a 5 (capta todo)
+function micOpts() {
+  let sens = 3, duck = true, always = false;
+  try { sens = Math.max(1, Math.min(5, parseInt(localStorage.getItem('micSens') || '3', 10) || 3)); duck = localStorage.getItem('micDuck') !== '0'; always = localStorage.getItem('micAlways') === '1'; } catch (e) {}
+  return { sens, duck, always };
+}
+function micSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} micCfgShow(true); }
+function micCfgShow(on) {
+  const o = micOpts();
+  $('#micCfg').style.display = on ? 'flex' : 'none';
+  $('#msVal').textContent = o.sens;
+  $('#msDuck').textContent = 'Silenciar cámara al hablar: ' + (o.duck ? 'sí' : 'no');
+  $('#msMode').textContent = o.always ? 'Modo: continuo' : 'Modo: automático';
+}
+$('#msDown').addEventListener('click', () => micSet('micSens', micOpts().sens - 1));
+$('#msUp').addEventListener('click', () => micSet('micSens', micOpts().sens + 1));
+$('#msDuck').addEventListener('click', () => micSet('micDuck', micOpts().duck ? '0' : '1'));
+$('#msMode').addEventListener('click', () => micSet('micAlways', micOpts().always ? '0' : '1'));
 $('#mic').addEventListener('click', () => (mic.on ? micStop() : micStart()));
 document.addEventListener('visibilitychange', () => { if (document.hidden) micStop(); });
 
