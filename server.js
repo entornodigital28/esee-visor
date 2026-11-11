@@ -14,6 +14,10 @@ const crypto = require('crypto');
 const ROOT = __dirname;
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
 const cams = JSON.parse(fs.readFileSync(path.join(ROOT, 'cameras.json'), 'utf8'));
+const CAMERA_SETTINGS_FILE = path.join(ROOT, 'camera-settings.json');
+let cameraSettings = {};
+try { cameraSettings = JSON.parse(fs.readFileSync(CAMERA_SETTINGS_FILE, 'utf8')); } catch { /* valores por defecto */ }
+if (!cameraSettings || typeof cameraSettings !== 'object' || Array.isArray(cameraSettings)) cameraSettings = {};
 const PORT = Number(process.env.PORT) || cams.port || 8080;
 const { execFile, execFileSync } = require('child_process');
 const git = (...args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000 }).trim();
@@ -242,6 +246,10 @@ const html = (res, code, text) => { res.writeHead(code, { 'Content-Type': 'text/
 // ---------- HTTP ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const validChannel = (ch) => Number.isInteger(ch) && cams.cameras.some((c) => c.channel === ch);
+const cameraPtzSpeed = (channel) => {
+  const speed = Number(cameraSettings[channel]?.ptzSpeed);
+  return Number.isInteger(speed) && speed >= 1 && speed <= 8 ? speed : 4;
+};
 
 function json(res, code, obj) { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); }
 
@@ -313,7 +321,17 @@ const server = http.createServer(async (req, res) => {
       if (p !== '/manifest.webmanifest') return json(res, 401, { error: 'Hace falta el PIN' });
     }
 
-    if (p === '/api/info') return json(res, 200, { version: VERSION, pin: !!PIN, cameras: cams.cameras.map((c) => ({ channel: c.channel, name: c.name, ptz: !!c.ptz })) });
+    if (p === '/api/info') return json(res, 200, { version: VERSION, pin: !!PIN, cameras: cams.cameras.map((c) => ({ channel: c.channel, name: c.name, ptz: !!c.ptz, ptzSpeed: cameraPtzSpeed(c.channel) })) });
+
+    if (p === '/api/camera-settings' && req.method === 'POST') {
+      let q = {}; try { q = JSON.parse(await readBody(req, 2000)); } catch { /* pedido inválido */ }
+      if (!q || typeof q !== 'object' || Array.isArray(q)) q = {};
+      const ch = Number(q.channel), speed = Number(q.ptzSpeed);
+      if (!validChannel(ch) || !Number.isInteger(speed) || speed < 1 || speed > 8) return json(res, 400, { error: 'ajuste inválido' });
+      cameraSettings[ch] = { ...(cameraSettings[ch] || {}), ptzSpeed: speed };
+      fs.writeFileSync(CAMERA_SETTINGS_FILE, JSON.stringify(cameraSettings, null, 2) + '\n');
+      return json(res, 200, { channel: ch, ptzSpeed: speed });
+    }
 
     // Video en vivo de una o varias cámaras por una sola conexión: /live?s=0:1,1:1,4:0  (canal:calidad); con &a=1 incluye el audio
     if (p === '/live') {

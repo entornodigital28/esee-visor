@@ -9,6 +9,7 @@ Estos equipos no ofrecen RTSP ni ONVIF: solo hablan un protocolo propio ("kp2p")
 - Grilla con todas las cámaras en vivo.
 - Cámara a pantalla completa, en calidad baja o alta (HD).
 - Movimiento (PTZ) y zoom, con botones en pantalla, teclado o control remoto.
+- Velocidad PTZ ajustable por cámara desde el engranaje; el ajuste se comparte entre los dispositivos conectados al visor.
 - Sonido en vivo de la cámara y botón para hablar por su parlante (requiere HTTPS).
 - Grabaciones del disco del DVR: línea de tiempo por día con los tramos de movimiento marcados, salto entre eventos, velocidad y zoom de la línea de tiempo.
 - Imagen flotante (PiP) donde el navegador lo permite.

@@ -1,6 +1,7 @@
 # Nunca subir la clave del DVR
 config.json
 passkeys.json
+camera-settings.json
 
 bin/
 capturas/
