@@ -1,7 +1,7 @@
 {
   "name": "Cámaras",
   "short_name": "Cámaras",
-  "start_url": "/safari",
+  "start_url": "/",
   "display": "browser",
   "background_color": "#0b0d10",
   "theme_color": "#0b0d10"

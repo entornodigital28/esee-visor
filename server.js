@@ -296,7 +296,9 @@ function createClipJob(ch, start, end, includeAudio = false) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
-  const safari = url.pathname === '/safari';
+  // Por defecto la página se sirve en "variante Safari" (sin modo app), así el ícono de inicio del iPhone abre en Safari.
+  // Con ?app=1 se sirve con modo app (pantalla completa, sin PiP). /safari queda por compatibilidad.
+  const safari = url.pathname === '/safari' || ((url.pathname === '/' || url.pathname === '/index.html') && url.searchParams.get('app') !== '1');
   const p = safari ? '/' : url.pathname;
   let m;
   try {
