@@ -40,9 +40,28 @@ Abrí esa dirección en el navegador del dispositivo.
 | 1 a 9 | Abrir esa cámara | Cambiar a esa cámara |
 | Atrás / Esc | — | Volver a la grilla |
 
+## PIN de acceso
+
+Agregá `"pin": "1234"` (el número que quieras) en `config.json` y reiniciá el servidor. Cada dispositivo lo pide una sola vez. Los botones de acción solo funcionan si hay un PIN configurado.
+
+## Botones de acción con eWeLink
+
+Permite agregar a una cámara botones que manejan un dispositivo eWeLink (Sonoff y compatibles), por ejemplo "Abrir reja".
+
+1. Abrí `http://localhost:8080/ewelink` en la computadora del servidor y seguí los pasos: crear la aplicación en [dev.ewelink.cc](https://dev.ewelink.cc), pegar el APPID y el APP SECRET en `ewelink.json` y conectar la cuenta.
+2. La página muestra tus dispositivos con su ID y permite probarlos.
+3. Agregá el botón a la cámara en `cameras.json`:
+
+```json
+{ "channel": 0, "name": "Entrada", "ptz": true,
+  "actions": [ { "label": "Abrir reja", "device": "1000xxxxxx", "do": "on" } ] }
+```
+
+`do` puede ser `on`, `off`, `toggle` o `pulse` (enciende y apaga a los `seconds` segundos). En dispositivos de varios canales agregá `"outlet": 0`. El control va primero por red local y, si falla, por la nube de eWeLink. En la página, el botón pide un segundo toque para confirmar.
+
 ## Seguridad
 
-- Cualquiera conectado a tu red puede ver y mover las cámaras desde la página: no tiene clave propia.
+- Sin PIN, cualquiera conectado a tu red puede ver y mover las cámaras desde la página.
 - No abras el puerto 8080 a internet. Para ver las cámaras desde afuera usá una VPN (por ejemplo Tailscale o WireGuard).
 
 ## Archivos
@@ -52,6 +71,7 @@ Abrí esa dirección en el navegador del dispositivo.
 - `lib/fmp4.js`: empaquetador de H.264 a MP4 fragmentado.
 - `public/index.html`: la página del visor.
 - `lib/recordings.js`: búsqueda y reproducción de grabaciones.
+- `lib/ewelink.js`: cuenta y control de dispositivos eWeLink.
 - `tools/probe.js`: diagnóstico; conecta, lista códec y resolución por canal y guarda unos segundos de video.
 
 ## Limitaciones conocidas

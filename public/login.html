@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0d10">
+<title>Cámaras</title>
+<style>
+  html,body { margin:0; height:100%; background:#0b0d10; color:#e8ecf1; font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  form { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; box-sizing:border-box; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  input { font:600 26px ui-monospace,Menlo,Consolas,monospace; letter-spacing:.3em; text-align:center; width:220px; padding:12px; border-radius:12px; border:1px solid #262c34; background:#14181d; color:#e8ecf1; outline:none; }
+  input:focus { border-color:#3ea6ff; }
+  button { font:600 16px system-ui,sans-serif; width:220px; padding:13px; border-radius:12px; border:0; background:#3ea6ff; color:#001a33; cursor:pointer; }
+  #e { color:#ff8a7a; min-height:1.4em; font-size:14px; }
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>Cámaras</h1>
+  <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" autofocus>
+  <button>Entrar</button>
+  <div id="e"></div>
+</form>
+<script>
+document.getElementById('f').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const e = document.getElementById('e'); e.textContent = '';
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: document.getElementById('pin').value }) });
+    if (r.ok) return location.reload();
+    e.textContent = (await r.json().catch(() => ({}))).error || 'No se pudo entrar';
+  } catch (x) { e.textContent = 'Sin conexión con el servidor'; }
+});
+</script>
+</body>
+</html>
