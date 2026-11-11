@@ -60,7 +60,9 @@
   #lockMsg { color:var(--dim); font-size:14px; min-height:1.4em; }
   #faceBar { position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:4; display:none; gap:8px; align-items:center; background:rgba(12,15,19,.92); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:8px 8px 8px 14px; font-size:14px; white-space:nowrap; }
   #faceBar .btn { height:40px; font-size:14px; touch-action:manipulation; }
-  #ver { position:fixed; right:10px; bottom:6px; color:#3b434d; font-size:10px; pointer-events:none; }
+  #ver { position:fixed; right:max(10px,env(safe-area-inset-right)); bottom:max(6px,env(safe-area-inset-bottom)); color:#aeb8c4; font-size:12px; pointer-events:none; z-index:3; background:rgba(12,15,19,.75); padding:2px 7px; border-radius:6px; }
+  #single.on ~ #faceChip, #single.on ~ #ver, #single.on ~ #faceBar { display:none !important; }
+  #faceChip { position:fixed; left:max(10px,env(safe-area-inset-left)); bottom:max(6px,env(safe-area-inset-bottom)); z-index:3; display:none; background:rgba(12,15,19,.85); color:var(--accent); border:1px solid rgba(62,166,255,.5); border-radius:8px; font:600 12px system-ui,sans-serif; padding:5px 10px; cursor:pointer; touch-action:manipulation; }
 </style>
 </head>
 <body>
@@ -109,6 +111,7 @@
   </div>
   <div id="hint" class="ui">Flechas: mover · OK: calidad · +/−: zoom · Atrás: volver</div>
 </div>
+<button id="faceChip">Activar Face ID</button>
 <div id="faceBar"><span>Entrar con tu cara</span><button class="btn on" id="faceOn">Activar Face ID</button><button class="btn" id="faceNo">Ahora no</button></div>
 <div id="lock"><div style="font-size:20px;font-weight:600">Cámaras</div><button class="btn on" id="lockBtn">Desbloquear</button><div id="lockMsg"></div></div>
 <div id="ver"></div>
@@ -732,12 +735,16 @@ async function faceRegister() { // crea la llave en este dispositivo y la guarda
   store.set('faceId', b64u(cred.rawId)); sess.set('unlocked', '1');
 }
 function faceOffer(pinOn) { // ofrecer activar Face ID una vez, si el dispositivo puede
-  if (!pinOn || !faceOK || store.get('faceId') || store.get('faceSkip')) return;
-  const bar = $('#faceBar'); bar.style.display = 'flex';
-  $('#faceNo').onclick = () => { store.set('faceSkip', '1'); bar.style.display = 'none'; };
+  if (!pinOn || !faceOK || store.get('faceId')) return;
+  const bar = $('#faceBar'), chip = $('#faceChip');
+  // si antes eligió "Ahora no", queda un botón chico abajo a la izquierda para activarlo cuando quiera
+  const showBar = (on) => { bar.style.display = on ? 'flex' : 'none'; chip.style.display = on ? 'none' : 'block'; };
+  showBar(!store.get('faceSkip'));
+  chip.onclick = () => showBar(true);
+  $('#faceNo').onclick = () => { store.set('faceSkip', '1'); showBar(false); };
   $('#faceOn').onclick = async () => {
     const label = bar.querySelector('span'); label.style.color = ''; label.textContent = 'Registrando…';
-    try { await faceRegister(); label.textContent = 'Face ID activado'; setTimeout(() => { bar.style.display = 'none'; }, 1500); }
+    try { await faceRegister(); label.textContent = 'Face ID activado'; chip.style.display = 'none'; setTimeout(() => { bar.style.display = 'none'; }, 1500); }
     catch (e) {
       // mostrar siempre el motivo, y avisarle al servidor para poder diagnosticarlo
       const why = e.name === 'NotAllowedError' ? 'cancelado o no permitido por el dispositivo (' + e.message + ')' : (e.name && e.name !== 'Error' ? e.name + ': ' : '') + e.message;
