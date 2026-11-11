@@ -23,7 +23,11 @@ Hace falta una computadora que quede encendida en la misma red que el DVR.
 2. Cloná este repositorio.
 3. Copiá `config.example.json` como `config.json` y completá la IP, el usuario y la clave del DVR. Ese archivo no se sube nunca a GitHub.
 4. Ajustá `cameras.json` con los canales que tengas conectados (los canales empiezan en 0).
-5. Ejecutá `iniciar.bat` (y, si querés que arranque solo con Windows, `instalar-inicio.bat` una vez). Muestra la dirección para abrir, por ejemplo `http://192.168.0.50:8080`.
+5. Ejecutá `iniciar.bat`. Muestra la dirección para abrir, por ejemplo `http://192.168.0.50:8080`.
+
+### Dejarlo corriendo sin ventana
+
+Cerrá `iniciar.bat` y ejecutá `instalar-inicio.bat` una vez: el servidor queda corriendo oculto y arranca solo cada vez que iniciás sesión en Windows. Lo que imprime queda en `servidor.log`. Con `detener.bat` se detiene y con `quitar-inicio.bat` deja de arrancar solo.
 
 ## Uso
 
