@@ -28,6 +28,7 @@ const VERSION = (() => {
   return v;
 })();
 const log = (...a) => console.log(new Date().toLocaleTimeString(), ...a);
+const clipJobs = new Map();
 
 // Actualización automática (solo si se inició con iniciar.bat): cada 10 minutos mira GitHub;
 // si hay cambios, el servidor se cierra y iniciar.bat baja la versión nueva y lo reinicia.
@@ -257,6 +258,36 @@ function waitFor(test, ms) {
   return new Promise((resolve) => { const t0 = Date.now(); const tick = () => (test() || Date.now() - t0 > ms) ? resolve(test()) : setTimeout(tick, 150); tick(); });
 }
 
+function createClipJob(ch, start, end) {
+  const id = crypto.randomBytes(12).toString('hex');
+  const stamp = new Date(start * 1000).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const job = { id, ch, start, end, progress: 0, status: 'preparing', error: '', file: path.join(os.tmpdir(), 'esee-clip-' + id + '.mp4'), name: `camara-${ch}-${stamp}.mp4`, timer: null };
+  clipJobs.set(id, job);
+  const output = fs.createWriteStream(job.file);
+  const expire = (delay) => {
+    clearTimeout(job.timer);
+    job.timer = setTimeout(() => { fs.promises.unlink(job.file).catch(() => {}); clipJobs.delete(id); }, delay);
+    job.timer.unref?.();
+  };
+  const fail = (message) => {
+    if (job.status !== 'preparing') return;
+    job.status = 'error'; job.error = message; expire(5 * 60 * 1000);
+  };
+  output.once('error', (e) => fail(e.message));
+  output.once('close', () => { if (!output.writableFinished) fail('Se interrumpió la preparación del video'); });
+  output.once('finish', () => {
+    try {
+      const size = fs.statSync(job.file).size;
+      if (size < 1000) return fail('No se encontró video en el tramo elegido');
+      job.size = size; job.progress = 100; job.status = 'ready'; expire(15 * 60 * 1000);
+    } catch (e) { fail(e.message); }
+  });
+  job.timer = setTimeout(() => output.destroy(new Error('La cámara tardó demasiado en preparar el video')), 15 * 60 * 1000);
+  job.timer.unref?.();
+  replay(cfg, ch, start, output, log, end, (progress) => { if (job.status === 'preparing') job.progress = Math.max(job.progress, Math.floor(progress)); });
+  return job;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
@@ -379,6 +410,29 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Descargar un tramo como MP4: /api/rec/export?ch=0&start=<segundos DVR>&end=<segundos DVR>
+    if (p === '/api/rec/export' && req.method === 'POST') {
+      let q = {}; try { q = JSON.parse(await readBody(req, 2000)); } catch { /* pedido inválido */ }
+      const ch = Number(q.ch), start = Number(q.start), end = Number(q.end);
+      if (!validChannel(ch) || !Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= start || end - start > 7200 || end > dvrNow()) return json(res, 400, { error: 'Tramo inválido (máximo 2 horas)' });
+      const job = createClipJob(ch, start, end);
+      return json(res, 202, { id: job.id });
+    }
+    if (p === '/api/rec/export/status') {
+      const job = clipJobs.get(url.searchParams.get('id'));
+      if (!job) return json(res, 404, { error: 'La preparación venció; volvé a intentarlo' });
+      return json(res, 200, { status: job.status, progress: job.progress, error: job.error });
+    }
+    if (p === '/api/rec/export/file') {
+      const job = clipJobs.get(url.searchParams.get('id'));
+      if (!job || job.status !== 'ready') return json(res, 404, { error: 'El video todavía no está listo' });
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': job.size, 'Content-Disposition': `attachment; filename="${job.name}"`, 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      res.socket.setNoDelay(true);
+      const input = fs.createReadStream(job.file);
+      input.once('error', (e) => { log('descarga de grabación:', e.message); res.destroy(e); });
+      input.once('close', () => { fs.promises.unlink(job.file).catch(() => {}); clearTimeout(job.timer); clipJobs.delete(job.id); });
+      input.pipe(res);
+      return;
+    }
     if (p === '/api/rec/export') {
       const ch = Number(url.searchParams.get('ch'));
       const start = Number(url.searchParams.get('start')), end = Number(url.searchParams.get('end'));
