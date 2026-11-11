@@ -22,7 +22,7 @@
   .tile .name, #title { position:absolute; left:8px; top:8px; padding:3px 9px; border-radius:6px; background:var(--glass); font-weight:600; font-size:13px; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
   .state { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:13px; pointer-events:none; text-align:center; padding:12px; }
   .state.hide { display:none; }
-  @media (orientation:portrait) and (max-width:700px) { #grid { --cols:1 !important; grid-auto-rows:auto; } .tile { aspect-ratio:16/9; } }
+  @media (orientation:portrait) and (max-width:700px) { #grid { --cols:1 !important; grid-auto-rows:max-content; align-content:start; } .tile { height:calc((100vw - 16px) * 9 / 16); } }
 
   #single { position:fixed; inset:0; background:#000; display:none; }
   #single.on { display:block; }
@@ -49,6 +49,7 @@
   <div class="state" id="bigState">Conectando…</div>
   <div id="title" class="ui"></div>
   <div id="top" class="ui">
+    <button class="btn" id="pip" style="display:none">PiP</button>
     <button class="btn" id="hd">HD</button>
     <button class="btn" id="back">Volver</button>
   </div>
@@ -72,54 +73,92 @@ const $ = (s) => document.querySelector(s);
 const MS = window.ManagedMediaSource || window.MediaSource;
 
 // ---------- Reproductor: una pantalla de video ----------
+// Siempre guarda lo último recibido (formato, inicio y fragmentos desde el último cuadro clave),
+// pero solo decodifica cuando está "activo" (a la vista). Así un celular no intenta
+// decodificar todas las cámaras a la vez, y al activarse arranca al instante.
 class Sink {
   constructor(video, stateEl) {
-    this.video = video; this.stateEl = stateEl; this.ms = null; this.sb = null; this.queue = []; this.onFail = null;
-    this.n = { seek: 0, wait: 0, stall: 0, err: 0, meta: 0, appendErr: 0, bytes: 0 };
-    video.addEventListener("waiting", () => this.n.wait++); video.addEventListener("stalled", () => this.n.stall++); video.addEventListener("error", () => this.n.err++);
+    this.video = video; this.stateEl = stateEl; this.ms = null; this.sb = null; this.queue = [];
+    this.meta = null; this.initSeg = null; this.gop = []; this.active = true; this.fails = 0; this.failAt = 0;
+    this.n = { seek: 0, wait: 0, stall: 0, err: 0, build: 0, appendErr: 0, bytes: 0 };
+    video.addEventListener('waiting', () => this.n.wait++); video.addEventListener('stalled', () => this.n.stall++); video.addEventListener('error', () => this.n.err++);
   }
   stats() {
     const v = this.video, b = v.buffered, r = [];
-    for (let i = 0; i < b.length && i < 4; i++) r.push(+b.start(i).toFixed(2) + "-" + +b.end(i).toFixed(2));
+    for (let i = 0; i < b.length && i < 4; i++) r.push(+b.start(i).toFixed(2) + '-' + +b.end(i).toFixed(2));
     const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : {};
-    return Object.assign({ t: +v.currentTime.toFixed(2), rs: v.readyState, p: v.paused ? 1 : 0, w: v.videoWidth, nr: b.length, r: r.join(" "), fr: q.totalVideoFrames, dr: q.droppedVideoFrames, e: v.error ? v.error.code + ":" + v.error.message : undefined }, this.n);
+    return Object.assign({ a: this.active ? 1 : 0, t: +v.currentTime.toFixed(2), rs: v.readyState, p: v.paused ? 1 : 0, w: v.videoWidth, nr: b.length, r: r.join(' '), fr: q.totalVideoFrames, dr: q.droppedVideoFrames, e: v.error ? v.error.code + ':' + v.error.message : undefined, le: this.lastErr, fails: this.fails }, this.n);
   }
-  say(t) { if (this.stateEl) { this.stateEl.textContent = t || ""; this.stateEl.classList.toggle("hide", !t); } }
+  say(t) { if (this.stateEl) { this.stateEl.textContent = t || ''; this.stateEl.classList.toggle('hide', !t); } }
+
+  // Apaga el decodificador (no borra lo guardado)
   teardown() {
-    this.ms = null; this.sb = null; this.queue = []; this.dead = false;
+    clearTimeout(this.recoverTimer);
+    this.ms = null; this.sb = null; this.queue = [];
     try { this.video.pause(); } catch (e) {}
     if (this.url) { URL.revokeObjectURL(this.url); this.url = null; }
-    this.video.removeAttribute("src"); try { this.video.load(); } catch (e) {}
+    this.video.removeAttribute('src'); try { this.video.load(); } catch (e) {}
   }
-  onMeta(meta) {
-    this.teardown(); this.n.meta++;
-    const v = this.video, mime = `video/mp4; codecs="${meta.codec}"`;
-    if (!MS.isTypeSupported(mime)) { this.dead = true; this.say("Este dispositivo no reproduce " + meta.codec); return; }
+  // Olvida todo (al cortar la conexión)
+  clear() { this.teardown(); this.meta = null; this.initSeg = null; this.gop = []; this.fails = 0; this.gaveUp = false; }
+
+  setActive(on) {
+    if (this.active === on) return;
+    this.active = on;
+    if (on) { this.gaveUp = false; this.fails = 0; this.build(); } else this.teardown();
+  }
+
+  // Arma el decodificador con lo guardado
+  build() {
+    this.teardown();
+    if (!this.active || !this.meta || !this.initSeg || this.gaveUp) return;
+    const v = this.video, mime = `video/mp4; codecs="${this.meta.codec}"`;
+    if (!MS.isTypeSupported(mime)) { this.gaveUp = true; this.say('Este dispositivo no reproduce ' + this.meta.codec); return; }
+    this.n.build++;
     const ms = this.ms = new MS();
     if (window.ManagedMediaSource) v.disableRemotePlayback = true;
     this.url = URL.createObjectURL(ms); v.src = this.url;
-    ms.addEventListener("sourceopen", () => {
+    ms.addEventListener('sourceopen', () => {
       if (this.ms !== ms) return;
-      try { this.sb = ms.addSourceBuffer(mime); } catch (e) { this.dead = true; this.say("No se pudo iniciar el video"); return; }
-      this.sb.addEventListener("updateend", () => { this.pump(); if (v.readyState >= 2) this.say(""); });
+      try { this.sb = ms.addSourceBuffer(mime); } catch (e) { this.lastErr = 'addSourceBuffer: ' + e; this.fail(); return; }
+      this.sb.addEventListener('updateend', () => { this.pump(); if (v.readyState >= 2) { this.say(''); if (Date.now() - this.failAt > 20000) this.fails = 0; } });
+      this.sb.addEventListener('error', () => { this.lastErr = 'sourcebuffer error'; this.fail(); });
+      this.queue = [this.initSeg, ...this.gop];
       this.pump(); v.play().catch(() => {});
     }, { once: true });
   }
-  onData(payload) { if (!this.ms || this.dead) return; this.n.bytes += payload.length; this.queue.push(payload); this.pump(); }
+
+  // Falla de este video solamente: reintenta solo, y si insiste se queda en pausa
+  fail() {
+    this.n.appendErr++; this.fails++; this.failAt = Date.now();
+    this.teardown();
+    if (this.fails >= 4) { this.gaveUp = true; this.say('Tocá para ver esta cámara'); return; }
+    this.say('Reconectando…');
+    this.recoverTimer = setTimeout(() => this.build(), 1500 * this.fails);
+  }
+
+  onMeta(meta) { this.meta = meta; this.initSeg = null; this.gop = []; this.teardown(); }
+  onInit(payload) { this.initSeg = payload; this.build(); }
+  onFrag(payload, key) {
+    this.n.bytes += payload.length;
+    if (key) this.gop = [];
+    if (this.gop.length < 400) this.gop.push(payload);
+    if (this.sb || (this.ms && this.queue.length)) { this.queue.push(payload); this.pump(); }
+  }
   pump() {
     const sb = this.sb;
     if (!sb || sb.updating || !this.queue.length) return;
     let total = 0; for (const q of this.queue) total += q.length;
     const all = new Uint8Array(total); let o = 0; for (const q of this.queue) { all.set(q, o); o += q.length; }
     this.queue = [];
-    try { sb.appendBuffer(all); } catch (e) { this.n.appendErr++; this.lastErr = String(e); if (this.onFail) this.onFail(); }
+    try { sb.appendBuffer(all); } catch (e) { this.lastErr = 'append: ' + e; this.fail(); }
   }
   chase() { // mantenerse cerca del vivo y no acumular memoria
     const v = this.video, sb = this.sb;
     if (!sb || !v.buffered.length) return;
     const start = v.buffered.start(0), end = v.buffered.end(v.buffered.length - 1), lag = end - v.currentTime;
-    if (v.currentTime < start || lag > 2.5) { this.n.seek++; v.currentTime = Math.max(start, end - 0.35); }
-    else v.playbackRate = lag > 1.2 ? 1.12 : 1;
+    if (v.currentTime < start - 0.05 || lag > 3) { this.n.seek++; v.currentTime = Math.max(start, end - 0.4); }
+    else v.playbackRate = lag > 1.3 ? 1.1 : 1;
     if (v.paused) v.play().catch(() => {});
     if (!sb.updating && v.currentTime - start > 25) { try { sb.remove(start, v.currentTime - 8); } catch (e) {} }
   }
@@ -127,12 +166,12 @@ class Sink {
 
 // ---------- Conexión: una sola descarga trae todas las cámaras pedidas ----------
 class Conn {
-  constructor(specs, sinks) { this.specs = specs; this.sinks = sinks; this.alive = false; sinks.forEach((s) => { s.onFail = () => this.abort && this.abort.abort(); }); }
+  constructor(specs, sinks) { this.specs = specs; this.sinks = sinks; this.alive = false; }
   start() { if (this.alive) return; this.alive = true; this.sinks.forEach((s) => s.say("Conectando…")); this.run(); }
   stop() {
     this.alive = false; clearInterval(this.timer); clearTimeout(this.again);
     if (this.abort) this.abort.abort();
-    this.sinks.forEach((s) => s.teardown());
+    this.sinks.forEach((s) => s.clear());
   }
   async run() {
     if (!MS) { // iPhone antiguo: sin MSE, usar HLS nativo (unos segundos de demora)
@@ -162,14 +201,14 @@ class Conn {
           const type = buf[off + 4], sink = this.sinks[buf[off + 5]], payload = buf.slice(off + 6, off + 4 + len);
           off += 4 + len;
           if (!sink) continue;
-          if (type === 0) sink.onMeta(JSON.parse(new TextDecoder().decode(payload))); else sink.onData(payload);
+          if (type === 0) sink.onMeta(JSON.parse(new TextDecoder().decode(payload))); else if (type === 1) sink.onInit(payload); else sink.onFrag(payload, type === 3);
         }
         buf = buf.subarray(off);
       }
     } catch (e) { /* cae a reintento */ }
     clearInterval(this.timer);
     if (!this.alive) return;
-    this.sinks.forEach((s) => s.say("Reconectando…"));
+    this.sinks.forEach((s) => { s.clear(); s.say("Reconectando…"); });
     this.again = setTimeout(() => this.alive && this.run(), 1500);
   }
 }
@@ -182,6 +221,10 @@ function cols() { return parseInt(getComputedStyle(grid).gridTemplateColumns.spl
 function layout() { const n = cameras.length; grid.style.setProperty('--cols', n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4); }
 function select(i) { sel = Math.max(0, Math.min(tiles.length - 1, i)); tiles.forEach((t, k) => t.el.classList.toggle('sel', k === sel)); tiles[sel] && tiles[sel].el.scrollIntoView({ block: 'nearest' }); }
 
+const seen = window.IntersectionObserver ? new IntersectionObserver((list) => {
+  for (const e of list) { const t = tiles.find((x) => x.el === e.target); if (t) t.sink.setActive(e.isIntersecting); }
+}, { root: null, threshold: 0.15 }) : null;
+
 function buildGrid() {
   grid.innerHTML = ''; tiles = [];
   cameras.forEach((c, i) => {
@@ -189,6 +232,7 @@ function buildGrid() {
     el.innerHTML = '<video muted playsinline autoplay></video><div class="state">Conectando…</div><div class="name"></div>';
     el.querySelector('.name').textContent = c.name;
     el.addEventListener('click', () => { select(i); openCam(i); });
+    if (seen) seen.observe(el);
     grid.appendChild(el);
     tiles.push({ el, sink: new Sink(el.querySelector('video'), el.querySelector('.state')) });
   });
@@ -263,9 +307,23 @@ window.addEventListener('blur', ptzStop);
 
 // Pausar video cuando la página no se ve (ahorra batería y ancho de banda)
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { ptzStop(); if (cur >= 0) { bigConn && bigConn.stop(); } else stopGrid(); }
-  else if (cur >= 0) playBig(); else startGrid();
+  if (document.hidden) { ptzStop(); if (inPip()) return; if (cur >= 0) { bigConn && bigConn.stop(); } else stopGrid(); }
+  else if (inPip()) return; else if (cur >= 0) playBig(); else startGrid();
 });
+
+// ---------- Imagen flotante (PiP): seguir viendo la cámara mientras usás otra app ----------
+const bigV = $('#big');
+const pipWebkit = !!(bigV.webkitSupportsPresentationMode && bigV.webkitSupportsPresentationMode('picture-in-picture'));
+function inPip() { return !!document.pictureInPictureElement || bigV.webkitPresentationMode === 'picture-in-picture'; }
+if (pipWebkit || document.pictureInPictureEnabled) {
+  $('#pip').style.display = '';
+  $('#pip').addEventListener('click', () => {
+    try {
+      if (pipWebkit) bigV.webkitSetPresentationMode(inPip() ? 'inline' : 'picture-in-picture');
+      else if (inPip()) document.exitPictureInPicture(); else bigV.requestPictureInPicture().catch(() => {});
+    } catch (e) {}
+  });
+}
 
 // ---------- Arranque y actualización automática ----------
 async function info() { const r = await fetch('/api/info', { cache: 'no-store' }); return r.json(); }

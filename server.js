@@ -56,7 +56,7 @@ class Feed {
 
   // Un cliente es { res, tag }: varias cámaras comparten una misma respuesta HTTP,
   // cada registro lleva su "tag" (posición de la cámara en el pedido).
-  // Registro: [largo u32][tipo u8][tag u8][datos]. Tipos: 0 = formato (JSON), 1 = inicio MP4, 2 = fragmento.
+  // Registro: [largo u32][tipo u8][tag u8][datos]. Tipos: 0 = formato (JSON), 1 = inicio MP4, 2 = fragmento, 3 = fragmento con cuadro clave.
   static write(client, type, payload) {
     const h = Buffer.alloc(6); h.writeUInt32BE(payload.length + 2, 0); h[4] = type; h[5] = client.tag;
     client.res.write(h); client.res.write(payload);
@@ -66,7 +66,7 @@ class Feed {
     this.clients.add(client); this.lastUse = Date.now();
     if (this.mux.init) {
       Feed.write(client, 0, this.meta()); Feed.write(client, 1, this.mux.init);
-      for (const f of this.gop) Feed.write(client, 2, f);
+      this.gop.forEach((f, i) => Feed.write(client, i === 0 ? 3 : 2, f));
     }
     client.res.on('close', () => { this.clients.delete(client); this.lastUse = Date.now(); });
   }
@@ -97,7 +97,7 @@ class Feed {
       }
       this.gop.push(f.data);
       if (this.cur) { this.cur.parts.push(f.data); this.cur.dur += f.duration; }
-      this.send(2, f.data);
+      this.send(f.key ? 3 : 2, f.data);
     }
   }
 
