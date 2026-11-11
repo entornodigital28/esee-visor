@@ -258,10 +258,10 @@ function waitFor(test, ms) {
   return new Promise((resolve) => { const t0 = Date.now(); const tick = () => (test() || Date.now() - t0 > ms) ? resolve(test()) : setTimeout(tick, 150); tick(); });
 }
 
-function createClipJob(ch, start, end) {
+function createClipJob(ch, start, end, includeAudio = false) {
   const id = crypto.randomBytes(12).toString('hex');
   const stamp = new Date(start * 1000).toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const job = { id, ch, start, end, progress: 0, status: 'preparing', error: '', file: path.join(os.tmpdir(), 'esee-clip-' + id + '.mp4'), name: `camara-${ch}-${stamp}.mp4`, timer: null };
+  const job = { id, ch, start, end, includeAudio, progress: 0, status: 'preparing', error: '', file: path.join(os.tmpdir(), 'esee-clip-' + id + '.mp4'), name: `camara-${ch}-${stamp}.mp4`, timer: null };
   clipJobs.set(id, job);
   const output = fs.createWriteStream(job.file);
   const expire = (delay) => {
@@ -284,7 +284,7 @@ function createClipJob(ch, start, end) {
   });
   job.timer = setTimeout(() => output.destroy(new Error('La cámara tardó demasiado en preparar el video')), 15 * 60 * 1000);
   job.timer.unref?.();
-  replay(cfg, ch, start, output, log, end, (progress) => { if (job.status === 'preparing') job.progress = Math.max(job.progress, Math.floor(progress)); });
+  replay(cfg, ch, start, output, log, end, (progress) => { if (job.status === 'preparing') job.progress = Math.max(job.progress, Math.floor(progress)); }, includeAudio);
   return job;
 }
 
@@ -414,7 +414,7 @@ const server = http.createServer(async (req, res) => {
       let q = {}; try { q = JSON.parse(await readBody(req, 2000)); } catch { /* pedido inválido */ }
       const ch = Number(q.ch), start = Number(q.start), end = Number(q.end);
       if (!validChannel(ch) || !Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= start || end - start > 7200 || end > dvrNow()) return json(res, 400, { error: 'Tramo inválido (máximo 2 horas)' });
-      const job = createClipJob(ch, start, end);
+      const job = createClipJob(ch, start, end, q.audio === true);
       return json(res, 202, { id: job.id });
     }
     if (p === '/api/rec/export/status') {
@@ -446,7 +446,7 @@ const server = http.createServer(async (req, res) => {
           output.once('finish', resolve);
           output.once('error', reject);
           output.once('close', () => { if (!output.writableFinished) reject(new Error('No se pudo preparar el video')); });
-          replay(cfg, ch, start, output, log, end);
+        replay(cfg, ch, start, output, log, end, null, url.searchParams.get('audio') === '1');
         });
         const size = fs.statSync(tempFile).size;
         res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': size, 'Content-Disposition': `attachment; filename="camara-${ch}-${stamp}.mp4"`, 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
