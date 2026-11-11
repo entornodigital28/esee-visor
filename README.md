@@ -9,6 +9,9 @@ Estos equipos no ofrecen RTSP ni ONVIF: solo hablan un protocolo propio ("kp2p")
 - Grilla con todas las cámaras en vivo.
 - Cámara a pantalla completa, en calidad baja o alta (HD).
 - Movimiento (PTZ) y zoom, con botones en pantalla, teclado o control remoto.
+- Sonido en vivo de la cámara.
+- Grabaciones del disco del DVR: línea de tiempo por día con los tramos de movimiento marcados, salto entre eventos, velocidad y zoom de la línea de tiempo.
+- Imagen flotante (PiP) donde el navegador lo permite.
 - Se actualiza solo: el servidor baja las versiones nuevas desde GitHub y las pantallas abiertas se recargan.
 - Sin dependencias: solo hace falta Node.js 22 o más nuevo.
 
@@ -48,11 +51,14 @@ Abrí esa dirección en el navegador del dispositivo.
 - `lib/kp2p.js`: cliente del protocolo del DVR.
 - `lib/fmp4.js`: empaquetador de H.264 a MP4 fragmentado.
 - `public/index.html`: la página del visor.
+- `lib/recordings.js`: búsqueda y reproducción de grabaciones.
 - `tools/probe.js`: diagnóstico; conecta, lista códec y resolución por canal y guarda unos segundos de video.
 
 ## Limitaciones conocidas
 
-- Sin audio por ahora (el DVR lo envía en G.711A).
-- Sin reproducción de grabaciones.
+- Las grabaciones se reproducen sin sonido.
+- La velocidad rápida de grabaciones depende de lo que entregue el DVR (en la práctica, unas 2 o 3 veces el tiempo real).
+- La hora impresa en la imagen puede diferir unos segundos de la línea de tiempo: son relojes distintos (cámara y DVR).
+- No se puede hablar por el parlante ni manejar las luces todavía.
 - Solo H.264. Las cámaras que transmitan en H.265 no se ven.
 - En iPhone anterior a iOS 17.1 se usa HLS, con unos segundos de demora.

@@ -41,7 +41,7 @@
   @media (max-width:700px) { #hint { display:none; } }
   #rec { position:absolute; left:0; right:0; bottom:0; display:none; flex-direction:column; gap:6px; padding:26px max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background:linear-gradient(transparent,rgba(0,0,0,.82) 38%); }
   #single.rec #rec { display:flex; }
-  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd { display:none !important; }
+  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd, #single.rec #snd { display:none !important; }
   #rec .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   #rec .sp { flex:1; }
   .btn.sm { height:40px; min-width:40px; padding:0 11px; font-size:13px; border-radius:10px; touch-action:manipulation; }
@@ -62,6 +62,7 @@
   <div class="state" id="bigState">Conectando…</div>
   <div id="title" class="ui"></div>
   <div id="top" class="ui">
+    <button class="btn" id="snd">Sonido</button>
     <button class="btn" id="recBtn">Grabaciones</button>
     <button class="btn" id="pip" style="display:none">PiP</button>
     <button class="btn" id="hd">HD</button>
@@ -200,7 +201,7 @@ class Sink {
 
 // ---------- Conexión: una sola descarga trae todas las cámaras pedidas ----------
 class Conn {
-  constructor(specs, sinks) { this.specs = specs; this.sinks = sinks; this.alive = false; }
+  constructor(specs, sinks, audio) { this.specs = specs; this.sinks = sinks; this.audio = !!audio; this.alive = false; }
   start() { if (this.alive) return; this.alive = true; this.sinks.forEach((s) => s.say("Conectando…")); this.run(); }
   stop() {
     this.alive = false; clearInterval(this.timer); clearTimeout(this.again);
@@ -220,7 +221,7 @@ class Conn {
     clearInterval(this.timer);
     this.timer = setInterval(() => this.sinks.forEach((s) => s.chase()), 700);
     try {
-      const resp = await fetch("/live?s=" + this.specs.map((x) => x.join(":")).join(","), { signal: this.abort.signal, cache: "no-store" });
+      const resp = await fetch("/live?s=" + this.specs.map((x) => x.join(":")).join(",") + (this.audio ? "&a=1" : ""), { signal: this.abort.signal, cache: "no-store" });
       if (!resp.ok || !resp.body) throw new Error("sin respuesta");
       const reader = resp.body.getReader();
       let buf = new Uint8Array(0);
@@ -235,7 +236,7 @@ class Conn {
           const type = buf[off + 4], sink = this.sinks[buf[off + 5]], payload = buf.slice(off + 6, off + 4 + len);
           off += 4 + len;
           if (!sink) continue;
-          if (type === 0) sink.onMeta(JSON.parse(new TextDecoder().decode(payload))); else if (type === 1) sink.onInit(payload); else sink.onFrag(payload, type === 3);
+          if (type === 0) sink.onMeta(JSON.parse(new TextDecoder().decode(payload))); else if (type === 1) sink.onInit(payload); else if (type === 6) soundFeed(payload); else sink.onFrag(payload, type === 3);
         }
         buf = buf.subarray(off);
       }
@@ -245,6 +246,36 @@ class Conn {
     this.sinks.forEach((s) => { s.clear(); s.say("Reconectando…"); });
     this.again = setTimeout(() => this.alive && this.run(), 1500);
   }
+}
+
+// ---------- Sonido de la cámara (G.711 A-law a 8 kHz, por Web Audio) ----------
+const sound = { on: false, ctx: null, gain: null, next: 0 };
+const ALAW = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const a = i ^ 0x55, seg = (a & 0x70) >> 4; let t = (a & 0x0f) << 4;
+  if (seg === 0) t += 8; else { t += 0x108; if (seg > 1) t <<= seg - 1; }
+  ALAW[i] = ((a & 0x80) ? t : -t) / 32768;
+}
+function soundFeed(payload) {
+  const ctx = sound.ctx, n = payload.length - 8;
+  if (!sound.on || !ctx || n <= 0) return;
+  const buf = ctx.createBuffer(1, n, 8000), out = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) out[i] = ALAW[payload[8 + i]];
+  const src = ctx.createBufferSource(); src.buffer = buf; src.connect(sound.gain);
+  // acompañar la demora del video para que no se adelante el sonido
+  const v = bigSink.video, b = v.buffered, lag = b.length ? Math.max(0.05, Math.min(3, b.end(b.length - 1) - v.currentTime)) : 0.5;
+  const want = ctx.currentTime + lag;
+  if (sound.next < ctx.currentTime + 0.02 || Math.abs(sound.next - want) > 0.4) sound.next = want;
+  src.start(sound.next); sound.next += n / 8000;
+}
+function soundToggle() {
+  sound.on = !sound.on;
+  if (sound.on) {
+    if (!sound.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) { sound.on = false; return; } sound.ctx = new AC(); sound.gain = sound.ctx.createGain(); sound.gain.gain.value = 1.6; sound.gain.connect(sound.ctx.destination); }
+    sound.ctx.resume(); sound.next = 0;
+  } else if (sound.ctx) sound.ctx.suspend();
+  $('#snd').classList.toggle('on', sound.on);
+  if (cur >= 0 && !rec.on) playBig();
 }
 
 // ---------- Estado ----------
@@ -278,7 +309,7 @@ function stopGrid() { if (gridConn) gridConn.stop(); }
 
 function playBig() {
   if (bigConn) bigConn.stop();
-  bigConn = new Conn([[cameras[cur].channel, hd ? 0 : 1]], [bigSink]);
+  bigConn = new Conn([[cameras[cur].channel, hd ? 0 : 1]], [bigSink], sound.on);
   bigConn.start();
   $('#hd').classList.toggle('on', hd);
 }
@@ -317,6 +348,7 @@ document.querySelectorAll('[data-ptz]').forEach((b) => {
 });
 $('#back').addEventListener('click', goBack);
 $('#hd').addEventListener('click', () => { hd = !hd; playBig(); });
+$('#snd').addEventListener('click', soundToggle);
 
 // ---------- Teclado / control remoto ----------
 const KEY_PTZ = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', '+': 'zoomIn', '=': 'zoomIn', '-': 'zoomOut', MediaFastForward: 'zoomIn', MediaRewind: 'zoomOut', PageUp: 'zoomIn', PageDown: 'zoomOut' };

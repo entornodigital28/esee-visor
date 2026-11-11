@@ -102,6 +102,17 @@ class Feed {
     }
   }
 
+  // Audio (G.711 A-law, 8 kHz): solo a los clientes que lo pidieron. Tipo 6 = [hora u64][muestras]
+  pushAudio(f) {
+    if (!f.enc.startsWith('G711A')) return;
+    let head = null;
+    for (const client of this.clients) {
+      if (!client.audio) continue;
+      if (!head) { head = Buffer.alloc(8); head.writeDoubleBE(f.ts, 0); head = Buffer.concat([head, f.data]); }
+      Feed.write(client, 6, head);
+    }
+  }
+
   reset() { this.mux.reset(); this.gop = []; this.segs = []; this.cur = null; this.frames = 0; }
 }
 
@@ -130,6 +141,7 @@ class DvrLink {
       if (this.onReady) { const fn = this.onReady; this.onReady = null; fn(); }
     });
     c.on('video', (f) => { const feed = this.feeds.get(f.channel); if (feed) feed.push(f); });
+    c.on('audio', (f) => { const feed = this.feeds.get(f.channel); if (feed) feed.pushAudio(f); });
     c.on('ptz', (r) => { if (r !== 0) log('PTZ respondió código', r); });
     c.on('error', (e) => log('DVR:', e.message));
     c.on('close', () => {
@@ -194,13 +206,14 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/api/info') return json(res, 200, { version: VERSION, cameras: cams.cameras });
 
-    // Video en vivo de una o varias cámaras por una sola conexión: /live?s=0:1,1:1,4:0  (canal:calidad)
+    // Video en vivo de una o varias cámaras por una sola conexión: /live?s=0:1,1:1,4:0  (canal:calidad); con &a=1 incluye el audio
     if (p === '/live') {
       const specs = (url.searchParams.get('s') || '').split(',').filter(Boolean).slice(0, 32).map((x) => x.split(':').map(Number));
       if (!specs.length || specs.some(([ch, st]) => !validChannel(ch) || (st !== 0 && st !== 1))) return json(res, 400, { error: 'pedido inválido' });
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
       res.socket.setNoDelay(true);
-      specs.forEach(([ch, st], tag) => links[st].feed(ch).addClient({ res, tag }));
+      const audio = url.searchParams.get('a') === '1';
+      specs.forEach(([ch, st], tag) => links[st].feed(ch).addClient({ res, tag, audio }));
       return;
     }
 
