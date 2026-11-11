@@ -1,6 +1,5 @@
 # Nunca subir la clave del DVR
 config.json
-ewelink.json
 
 bin/
 capturas/

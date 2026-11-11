@@ -52,11 +52,6 @@
   #tl { width:100%; height:58px; display:block; border-radius:8px; touch-action:none; cursor:pointer; }
   #recKey { color:var(--dim); font-size:11px; }
   #recKey i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 10px; vertical-align:-1px; }
-  #acts { position:absolute; left:max(12px,env(safe-area-inset-left)); top:calc(max(12px,env(safe-area-inset-top)) + 44px); display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
-  #acts .btn { height:46px; touch-action:manipulation; }
-  #acts .btn.ask { background:#ffb020; color:#221300; border-color:#ffb020; }
-  #single.rec #acts { display:none; }
-  #toast { position:fixed; left:50%; top:max(18px,env(safe-area-inset-top)); transform:translateX(-50%); background:rgba(12,15,19,.92); border:1px solid rgba(255,255,255,.18); padding:10px 16px; border-radius:10px; font-weight:600; display:none; z-index:5; max-width:90vw; text-align:center; }
   #ver { position:fixed; right:10px; bottom:6px; color:#3b434d; font-size:10px; pointer-events:none; }
 </style>
 </head>
@@ -66,7 +61,6 @@
   <video id="big" muted playsinline autoplay></video>
   <div class="state" id="bigState">Conectando…</div>
   <div id="title" class="ui"></div>
-  <div id="acts" class="ui"></div>
   <div id="top" class="ui">
     <button class="btn" id="snd">Sonido</button>
     <button class="btn" id="recBtn">Grabaciones</button>
@@ -106,7 +100,6 @@
   </div>
   <div id="hint" class="ui">Flechas: mover · OK: calidad · +/−: zoom · Atrás: volver</div>
 </div>
-<div id="toast"></div>
 <div id="ver"></div>
 
 <script>
@@ -325,7 +318,6 @@ function openCam(i, push = true) {
   const c = cameras[i];
   $('#title').textContent = c.name;
   $('#pad').style.display = $('#zoom').style.display = c.ptz ? '' : 'none';
-  buildActions(c);
   single.classList.add('on'); playBig(); wake();
   if (push) history.pushState({ cam: i }, '');
 }
@@ -357,32 +349,6 @@ document.querySelectorAll('[data-ptz]').forEach((b) => {
 $('#back').addEventListener('click', goBack);
 $('#hd').addEventListener('click', () => { hd = !hd; playBig(); });
 $('#snd').addEventListener('click', soundToggle);
-
-// ---------- Botones de acción (por ejemplo, abrir la reja) ----------
-let toastTimer = null;
-function toast(t, ms = 2500) { const el = $('#toast'); el.textContent = t; el.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.style.display = 'none'; }, ms); }
-function buildActions(c) {
-  const box = $('#acts'); box.innerHTML = '';
-  (c.actions || []).forEach((a, index) => {
-    const b = document.createElement('button'); b.className = 'btn'; b.textContent = a.label;
-    let armed = null;
-    b.addEventListener('click', async () => {
-      if (!armed) { // primer toque: pedir confirmación, para no accionar por accidente
-        b.classList.add('ask'); b.textContent = '¿' + a.label + '? Tocá de nuevo';
-        armed = setTimeout(() => { armed = null; b.classList.remove('ask'); b.textContent = a.label; }, 3500);
-        return;
-      }
-      clearTimeout(armed); armed = null; b.classList.remove('ask'); b.textContent = a.label; b.disabled = true;
-      try {
-        const r = await fetch('/api/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channel: c.channel, index }) });
-        const j = await r.json().catch(() => ({}));
-        toast(r.ok ? a.label + ': hecho' : (j.error || 'No se pudo ejecutar'), r.ok ? 2500 : 6000);
-      } catch (e) { toast('Sin conexión con el servidor', 5000); }
-      b.disabled = false;
-    });
-    box.appendChild(b);
-  });
-}
 
 // ---------- Teclado / control remoto ----------
 const KEY_PTZ = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', '+': 'zoomIn', '=': 'zoomIn', '-': 'zoomOut', MediaFastForward: 'zoomIn', MediaRewind: 'zoomOut', PageUp: 'zoomIn', PageDown: 'zoomOut' };
