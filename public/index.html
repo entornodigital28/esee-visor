@@ -387,10 +387,12 @@ async function micStart() {
     const src = mic.ctx.createMediaStreamSource(mic.stream);
     mic.node = mic.ctx.createScriptProcessor(2048, 1, 1);
     const ratio = mic.ctx.sampleRate / 8000; let acc = 0, sum = 0, cnt = 0;
+    let energy = 0, samples = 0, floor = 0.01, quietSince = 0, prev = null, speaking = false;
     mic.out = [];
     mic.node.onaudioprocess = (e) => { // promediar muestras para bajar a 8 kHz
       const x = e.inputBuffer.getChannelData(0);
       for (let i = 0; i < x.length; i++) {
+        energy += x[i] * x[i]; samples++;
         sum += x[i]; cnt++; acc += 1;
         if (acc >= ratio) { acc -= ratio; const v = Math.max(-1, Math.min(1, sum / cnt * 1.6)); mic.out.push(alawEnc(Math.round(v * 32767))); sum = 0; cnt = 0; }
       }
@@ -398,13 +400,27 @@ async function micStart() {
     const silent = mic.ctx.createGain(); silent.gain.value = 0; // el nodo necesita salida, pero no queremos escucharnos
     src.connect(mic.node); mic.node.connect(silent); silent.connect(mic.ctx.destination);
     mic.ch = cameras[cur].channel; mic.on = true;
-    if (sound.gain) sound.gain.gain.value = 0; // evitar acople mientras se habla
+    // Solo se manda audio mientras hablás. La cámara silencia su micrófono cuando reproduce,
+    // así que en las pausas dejamos de mandar para que vuelva a escucharse lo que pasa allá.
     mic.timer = setInterval(() => {
       if (!mic.out.length) return;
-      const body = new Uint8Array(mic.out); mic.out = [];
-      fetch('/api/talk?ch=' + mic.ch, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body }).catch(() => {});
+      const batch = new Uint8Array(mic.out); mic.out = [];
+      const rms = Math.sqrt(energy / Math.max(1, samples)); energy = 0; samples = 0;
+      const loud = rms > Math.max(0.02, floor * 3);
+      if (!loud) floor = floor * 0.9 + rms * 0.1; // ruido de fondo
+      const now = Date.now();
+      if (loud) quietSince = 0; else if (!quietSince) quietSince = now;
+      const was = speaking;
+      speaking = loud || (speaking && now - quietSince < 700); // sostener un poco para no cortar palabras
+      if (speaking) {
+        let body = batch;
+        if (!was && prev) { body = new Uint8Array(prev.length + batch.length); body.set(prev); body.set(batch, prev.length); } // no comerse el arranque
+        fetch('/api/talk?ch=' + mic.ch, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body }).catch(() => {});
+      }
+      if (speaking !== was) { if (sound.gain) sound.gain.gain.value = speaking ? 0 : 1.6; micLabel(speaking ? 'Hablando' : 'Cortar', true); } // evitar acople
+      prev = batch;
     }, 200);
-    mic.limit = setTimeout(micStop, 120000); // corte de seguridad a los 2 minutos
+    mic.limit = setTimeout(micStop, 300000); // corte de seguridad a los 5 minutos
     micLabel('Cortar', true);
   } catch (e) {
     micCleanup();
