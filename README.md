@@ -9,7 +9,7 @@ Estos equipos no ofrecen RTSP ni ONVIF: solo hablan un protocolo propio ("kp2p")
 - Grilla con todas las cámaras en vivo.
 - Cámara a pantalla completa, en calidad baja o alta (HD).
 - Movimiento (PTZ) y zoom, con botones en pantalla, teclado o control remoto.
-- Sonido en vivo de la cámara.
+- Sonido en vivo de la cámara y botón para hablar por su parlante (requiere HTTPS).
 - Grabaciones del disco del DVR: línea de tiempo por día con los tramos de movimiento marcados, salto entre eventos, velocidad y zoom de la línea de tiempo.
 - Imagen flotante (PiP) donde el navegador lo permite.
 - Se actualiza solo: el servidor baja las versiones nuevas desde GitHub y las pantallas abiertas se recargan.
@@ -82,7 +82,7 @@ Las llaves registradas se guardan en `passkeys.json` (no se sube a GitHub). Para
 - El sonido de las grabaciones solo se escucha a velocidad 1x.
 - La velocidad rápida de grabaciones depende de lo que entregue el DVR (en la práctica, unas 2 o 3 veces el tiempo real).
 - La hora impresa en la imagen puede diferir unos segundos de la línea de tiempo: son relojes distintos (cámara y DVR).
-- No se puede hablar por el parlante.
+- Hablar por el parlante solo aparece en páginas HTTPS (el navegador no da el micrófono de otra forma) y es de una vía por vez: mientras la cámara reproduce tu voz, silencia su propio micrófono. Si el sonido saliera con ruido, se puede probar otro formato agregando `"talkFormat": "V2"` (o `V3`, `V4`) en `cameras.json`.
 - Las luces (infrarrojo y LED blanco) no se pueden manejar: el DVR acepta el ajuste `ModeSetting.IRCutFilterMode` pero no lo reenvía a las cámaras, y `ledPwm` vuelve vacío.
 - Solo H.264. Las cámaras que transmitan en H.265 no se ven.
 - En iPhone anterior a iOS 17.1 se usa HLS, con unos segundos de demora.

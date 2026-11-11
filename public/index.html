@@ -42,7 +42,8 @@
   @media (max-width:700px) { #hint { display:none; } }
   #rec { position:absolute; left:0; right:0; bottom:0; display:none; flex-direction:column; gap:6px; padding:26px max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background:linear-gradient(transparent,rgba(0,0,0,.82) 38%); }
   #single.rec #rec { display:flex; }
-  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd { display:none !important; }
+  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd, #single.rec #mic { display:none !important; }
+  #top .btn.live { background:#e5484d; border-color:#e5484d; color:#fff; }
   #rec .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   #rec .sp { flex:1; }
   .btn.sm { height:40px; min-width:40px; padding:0 11px; font-size:13px; border-radius:10px; touch-action:manipulation; }
@@ -69,6 +70,7 @@
   <div class="state" id="bigState">Conectando…</div>
   <div id="title" class="ui"></div>
   <div id="top" class="ui">
+    <button class="btn" id="mic" title="Hablar por el parlante de la cámara" style="display:none">Hablar</button>
     <button class="btn" id="snd" title="Sonido">Audio</button>
     <button class="btn" id="recBtn" title="Grabaciones">Grab.</button>
     <button class="btn" id="pip" style="display:none">PiP</button>
@@ -327,12 +329,13 @@ function openCam(i, push = true) {
   const c = cameras[i];
   $('#title').textContent = c.name;
   $('#pad').style.display = $('#zoom').style.display = c.ptz ? '' : 'none';
+  micStop(); $('#mic').style.display = micOK ? '' : 'none';
   single.classList.add('on'); playBig(); wake();
   if (push) history.pushState({ cam: i }, '');
 }
 function closeCam() {
   if (cur < 0) return;
-  recExit(false); ptzStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
+  recExit(false); ptzStop(); micStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
   single.classList.remove('on'); const was = cur; cur = -1; select(was); startGrid();
 }
 function goBack() { if (rec.on) return recExit(); if (history.state && history.state.cam !== undefined) history.back(); else closeCam(); }
@@ -358,6 +361,71 @@ document.querySelectorAll('[data-ptz]').forEach((b) => {
 $('#back').addEventListener('click', goBack);
 $('#hd').addEventListener('click', () => { hd = !hd; playBig(); });
 $('#snd').addEventListener('click', soundToggle);
+
+// ---------- Hablar por el parlante de la cámara ----------
+// Toma el micrófono, lo baja a 8 kHz, lo codifica en G.711 A-law y lo manda al servidor en tandas cortas.
+// El navegador solo da el micrófono en páginas HTTPS.
+const micOK = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+const mic = { on: false, starting: false, stream: null, ctx: null, node: null, timer: null, limit: null, ch: -1, out: [] };
+function alawEnc(s) {
+  let sign = 0x80; if (s < 0) { s = -s - 1; sign = 0; } if (s > 32635) s = 32635;
+  let exp = 7; for (let mask = 0x4000; (s & mask) === 0 && exp > 0; mask >>= 1) exp--;
+  const man = exp === 0 ? (s >> 4) & 0x0f : (s >> (exp + 3)) & 0x0f;
+  return ((sign | (exp << 4) | man) ^ 0x55) & 0xff;
+}
+function micLabel(t, live) { const b = $('#mic'); b.textContent = t; b.classList.toggle('live', !!live); }
+async function micStart() {
+  if (mic.on || mic.starting || cur < 0 || rec.on) return;
+  mic.starting = true;
+  try {
+    mic.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    const AC = window.AudioContext || window.webkitAudioContext;
+    mic.ctx = new AC(); await mic.ctx.resume();
+    const src = mic.ctx.createMediaStreamSource(mic.stream);
+    mic.node = mic.ctx.createScriptProcessor(2048, 1, 1);
+    const ratio = mic.ctx.sampleRate / 8000; let acc = 0, sum = 0, cnt = 0;
+    mic.out = [];
+    mic.node.onaudioprocess = (e) => { // promediar muestras para bajar a 8 kHz
+      const x = e.inputBuffer.getChannelData(0);
+      for (let i = 0; i < x.length; i++) {
+        sum += x[i]; cnt++; acc += 1;
+        if (acc >= ratio) { acc -= ratio; const v = Math.max(-1, Math.min(1, sum / cnt * 1.6)); mic.out.push(alawEnc(Math.round(v * 32767))); sum = 0; cnt = 0; }
+      }
+    };
+    const silent = mic.ctx.createGain(); silent.gain.value = 0; // el nodo necesita salida, pero no queremos escucharnos
+    src.connect(mic.node); mic.node.connect(silent); silent.connect(mic.ctx.destination);
+    mic.ch = cameras[cur].channel; mic.on = true;
+    if (sound.gain) sound.gain.gain.value = 0; // evitar acople mientras se habla
+    mic.timer = setInterval(() => {
+      if (!mic.out.length) return;
+      const body = new Uint8Array(mic.out); mic.out = [];
+      fetch('/api/talk?ch=' + mic.ch, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body }).catch(() => {});
+    }, 200);
+    mic.limit = setTimeout(micStop, 120000); // corte de seguridad a los 2 minutos
+    micLabel('Cortar', true);
+  } catch (e) {
+    micCleanup();
+    micLabel(e.name === 'NotAllowedError' ? 'Sin permiso' : 'Sin micrófono', false);
+    setTimeout(() => { if (!mic.on) micLabel('Hablar', false); }, 2500);
+  }
+  mic.starting = false;
+}
+function micCleanup() {
+  clearInterval(mic.timer); clearTimeout(mic.limit);
+  try { if (mic.node) { mic.node.onaudioprocess = null; mic.node.disconnect(); } } catch (e) {}
+  try { if (mic.stream) mic.stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { if (mic.ctx) mic.ctx.close(); } catch (e) {}
+  mic.node = mic.stream = mic.ctx = null; mic.out = [];
+}
+function micStop() {
+  if (!mic.on) return;
+  mic.on = false; micCleanup();
+  fetch('/api/talk?ch=' + mic.ch + '&stop=1', { method: 'POST' }).catch(() => {});
+  if (sound.gain) sound.gain.gain.value = 1.6;
+  micLabel('Hablar', false);
+}
+$('#mic').addEventListener('click', () => (mic.on ? micStop() : micStart()));
+document.addEventListener('visibilitychange', () => { if (document.hidden) micStop(); });
 
 // ---------- Teclado / control remoto ----------
 const KEY_PTZ = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', '+': 'zoomIn', '=': 'zoomIn', '-': 'zoomOut', MediaFastForward: 'zoomIn', MediaRewind: 'zoomOut', PageUp: 'zoomIn', PageDown: 'zoomOut' };
@@ -586,7 +654,7 @@ function recTick() {
 
 async function recEnter() {
   if (cur < 0 || rec.on) return;
-  ptzStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
+  ptzStop(); micStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
   rec.on = true; rec.gen++; rec.zoom = 0; rec.speed = 0; rec.pendingT = null; rec.scrubW0 = null; rec.segs = []; rec.events = [];
   single.classList.add('rec'); $('#rSpeed').textContent = '1x'; recSetPlaying(true);
   rec.nowBase = Date.now() / 1000 - new Date().getTimezoneOffset() * 60; rec.nowAt = performance.now();

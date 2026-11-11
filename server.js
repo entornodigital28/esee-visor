@@ -189,6 +189,7 @@ function ptz(channel, action, speed) {
 }
 
 const recSearch = new RecSearch(cfg);
+const talk = new (require('./lib/talk').Talk)(cfg, (...a) => log(...a));
 
 // ---------- Acceso con PIN (opcional: "pin" en config.json) ----------
 const PIN = String(process.env.ESEE_PIN || cfg.pin || '');
@@ -374,6 +375,17 @@ const server = http.createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 20000) break; }
       fs.appendFile(path.join(ROOT, 'diag.log'), new Date().toISOString() + ' ' + req.socket.remoteAddress + ' ' + body.slice(0, 20000) + '\n', () => {});
+      return json(res, 200, { ok: true });
+    }
+
+    // Hablar por el parlante: el navegador manda tandas de audio G.711 A-law. /api/talk?ch=0  (con &stop=1 corta)
+    if (p === '/api/talk' && req.method === 'POST') {
+      const ch = Number(url.searchParams.get('ch'));
+      if (!validChannel(ch)) return json(res, 404, { error: 'canal inexistente' });
+      if (url.searchParams.get('stop') === '1') { talk.stop(ch); return json(res, 200, { ok: true }); }
+      const parts = []; let n = 0;
+      for await (const chunk of req) { parts.push(chunk); n += chunk.length; if (n > 32000) break; }
+      if (n) talk.push(ch, Buffer.concat(parts, n), cams.talkFormat);
       return json(res, 200, { ok: true });
     }
 
