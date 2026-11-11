@@ -41,7 +41,7 @@
   @media (max-width:700px) { #hint { display:none; } }
   #rec { position:absolute; left:0; right:0; bottom:0; display:none; flex-direction:column; gap:6px; padding:26px max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background:linear-gradient(transparent,rgba(0,0,0,.82) 38%); }
   #single.rec #rec { display:flex; }
-  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd, #single.rec #snd { display:none !important; }
+  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd { display:none !important; }
   #rec .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   #rec .sp { flex:1; }
   .btn.sm { height:40px; min-width:40px; padding:0 11px; font-size:13px; border-radius:10px; touch-action:manipulation; }
@@ -431,7 +431,7 @@ if (pipWebkit || document.pictureInPictureEnabled) {
 // Las horas son "segundos DVR": hora de pared como si fuera UTC (por eso se formatean con getUTC*).
 const SPANS = [86400, 21600, 3600, 600], SPAN_LABEL = ['24 h', '6 h', '1 h', '10 min'], SPEEDS = [1, 2, 4, 8];
 const DAYS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
-const rec = { on: false, day: 0, segs: [], events: [], nowBase: 0, nowAt: 0, zoom: 0, cursor: 0, target: 0, anchors: [], playing: true, speed: 0, pendingT: null, scrubW0: null, abort: null, timer: null, ended: false, gen: 0, listAt: 0 };
+const rec = { audio: [], srcs: [], on: false, day: 0, segs: [], events: [], nowBase: 0, nowAt: 0, zoom: 0, cursor: 0, target: 0, anchors: [], playing: true, speed: 0, pendingT: null, scrubW0: null, abort: null, timer: null, ended: false, gen: 0, listAt: 0 };
 const tl = $('#tl'), tlx = tl.getContext('2d');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const p2 = (n) => String(n).padStart(2, '0');
@@ -465,7 +465,7 @@ function recWall() { // hora de lo que se está viendo
 async function recPlay(t) {
   if (rec.abort) rec.abort.abort();
   const gen = ++rec.gen, ac = rec.abort = new AbortController();
-  rec.target = rec.cursor = t; rec.anchors = []; rec.ended = false;
+  rec.target = rec.cursor = t; rec.anchors = []; rec.ended = false; recAudioReset(true);
   bigSink.clear(); bigSink.active = true; bigSink.say('Cargando…');
   if (!MS) { bigSink.say('Este dispositivo no puede reproducir grabaciones'); return; }
   try {
@@ -494,6 +494,7 @@ async function recPlay(t) {
         else if (type === 1) bigSink.onInit(payload);
         else if (type === 2 || type === 3) bigSink.onFrag(payload, type === 3);
         else if (type === 5) rec.anchors.push(JSON.parse(new TextDecoder().decode(payload)));
+        else if (type === 6) { if (payload.length > 8) rec.audio.push({ ts: new DataView(payload.buffer, payload.byteOffset, 8).getFloat64(0), data: payload.subarray(8), done: false }); }
         else if (type === 7) rec.ended = true;
       }
       buf = buf.subarray(off);
@@ -511,7 +512,7 @@ function recSeek(t) {
   if (b.length && bigSink.sb) {
     for (let i = 0; i < rec.anchors.length; i++) {
       const a = rec.anchors[i], n = rec.anchors[i + 1], m = a.m + (t - a.ts / 1000);
-      if (m >= a.m && (!n || m < n.m) && m >= b.start(0) && m <= b.end(b.length - 1) - 0.5) { bigV.currentTime = m; rec.cursor = t; recDraw(); return; }
+      if (m >= a.m && (!n || m < n.m) && m >= b.start(0) && m <= b.end(b.length - 1) - 0.5) { bigV.currentTime = m; rec.cursor = t; recAudioReset(false); recDraw(); return; }
     }
   }
   recPlay(t);
@@ -528,8 +529,31 @@ function recEvent(dir) {
   if (dir > 0) ev = rec.events.find((e) => e[0] > c + 3); else for (const e of rec.events) { if (e[0] < c - 8) ev = e; else break; }
   if (ev) recSeek(Math.max(rec.day, ev[0] - 2)); else bigSink.say(dir > 0 ? 'No hay más movimiento este día' : 'No hay movimiento anterior este día'), setTimeout(() => { if (bigV.readyState >= 2) bigSink.say(''); }, 1800);
 }
-function recSetPlaying(on) { rec.playing = on; $('#rPlay').textContent = on ? '⏸' : '▶'; if (on) bigV.play().catch(() => {}); else bigV.pause(); }
+function recSetPlaying(on) { rec.playing = on; if (!on) recAudioReset(false); $('#rPlay').textContent = on ? '⏸' : '▶'; if (on) bigV.play().catch(() => {}); else bigV.pause(); }
 function recSetDay(d) { const tod = rec.cursor - rec.day; rec.day = d; rec.segs = []; rec.events = []; rec.gen++; recLoadDay(); recPlay(Math.min(d + tod, recNow() - 30)); }
+
+// Sonido de la grabación: se guarda lo recibido y se va programando en sincronía con el video (solo a 1x)
+function recAudioReset(drop) {
+  for (const s of rec.srcs) { try { s.stop(); } catch (e) {} }
+  rec.srcs = [];
+  if (drop) rec.audio = []; else for (const c of rec.audio) c.done = false;
+}
+function recAudioTick() {
+  const ctx = sound.ctx, v = bigV;
+  if (!sound.on || !ctx || !rec.playing || SPEEDS[rec.speed] !== 1 || v.paused || v.readyState < 3 || !rec.anchors.length) { if (rec.srcs.length && (SPEEDS[rec.speed] !== 1 || !sound.on)) recAudioReset(false); return; }
+  const wall = recWall() * 1000;
+  while (rec.audio.length && rec.audio[0].ts < wall - 3000) rec.audio.shift();
+  for (const c of rec.audio) {
+    if (c.ts > wall + 700) break;
+    if (c.done || c.ts < wall - 40) continue;
+    c.done = true;
+    const n = c.data.length, buf = ctx.createBuffer(1, n, 8000), out = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) out[i] = ALAW[c.data[i]];
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(sound.gain);
+    src.start(ctx.currentTime + Math.max(0, (c.ts - wall) / 1000));
+    rec.srcs.push(src); if (rec.srcs.length > 60) rec.srcs.shift();
+  }
+}
 
 function recWindow() {
   const span = SPANS[rec.zoom];
@@ -581,6 +605,7 @@ function recTick() {
     if (rec.cursor >= rec.day + 86400) { rec.day += 86400; rec.segs = []; rec.events = []; recLoadDay(); }
   }
   if (rec.day + 86400 > recNow() && Date.now() - rec.listAt > 60000) { rec.listAt = Date.now(); recLoadDay(); } // hoy sigue creciendo
+  recAudioTick();
   recDraw();
 }
 
@@ -600,7 +625,7 @@ function recExit(resumeLive = true) {
   if (!rec.on) return;
   rec.on = false; rec.gen++; clearInterval(rec.timer); clearTimeout(nudgeTimer);
   if (rec.abort) rec.abort.abort();
-  bigV.playbackRate = 1; bigSink.clear(); single.classList.remove('rec');
+  recAudioReset(true); bigV.playbackRate = 1; bigSink.clear(); single.classList.remove('rec');
   if (resumeLive && cur >= 0) playBig();
 }
 

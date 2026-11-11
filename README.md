@@ -23,7 +23,7 @@ Hace falta una computadora que quede encendida en la misma red que el DVR.
 2. Cloná este repositorio.
 3. Copiá `config.example.json` como `config.json` y completá la IP, el usuario y la clave del DVR. Ese archivo no se sube nunca a GitHub.
 4. Ajustá `cameras.json` con los canales que tengas conectados (los canales empiezan en 0).
-5. Ejecutá `iniciar.bat`. Muestra la dirección para abrir, por ejemplo `http://192.168.0.50:8080`.
+5. Ejecutá `iniciar.bat` (y, si querés que arranque solo con Windows, `instalar-inicio.bat` una vez). Muestra la dirección para abrir, por ejemplo `http://192.168.0.50:8080`.
 
 ## Uso
 
@@ -76,9 +76,10 @@ Permite agregar a una cámara botones que manejan un dispositivo eWeLink (Sonoff
 
 ## Limitaciones conocidas
 
-- Las grabaciones se reproducen sin sonido.
+- El sonido de las grabaciones solo se escucha a velocidad 1x.
 - La velocidad rápida de grabaciones depende de lo que entregue el DVR (en la práctica, unas 2 o 3 veces el tiempo real).
 - La hora impresa en la imagen puede diferir unos segundos de la línea de tiempo: son relojes distintos (cámara y DVR).
-- No se puede hablar por el parlante ni manejar las luces todavía.
+- No se puede hablar por el parlante.
+- Las luces (infrarrojo y LED blanco) no se pueden manejar: el DVR acepta el ajuste `ModeSetting.IRCutFilterMode` pero no lo reenvía a las cámaras, y `ledPwm` vuelve vacío.
 - Solo H.264. Las cámaras que transmitan en H.265 no se ven.
 - En iPhone anterior a iOS 17.1 se usa HLS, con unos segundos de demora.
