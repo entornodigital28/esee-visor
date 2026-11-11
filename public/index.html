@@ -32,7 +32,8 @@
   .btn { background:var(--glass); color:var(--text); border:1px solid rgba(255,255,255,.16); border-radius:12px; font:600 15px system-ui,sans-serif; min-width:52px; height:52px; padding:0 14px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); touch-action:none; }
   .btn:active, .btn.down { background:var(--accent); color:#001a33; }
   .btn.on { border-color:var(--accent); color:var(--accent); }
-  #top { position:absolute; right:max(12px,env(safe-area-inset-right)); top:max(12px,env(safe-area-inset-top)); display:flex; gap:8px; }
+  #top { position:absolute; right:max(12px,env(safe-area-inset-right)); top:max(12px,env(safe-area-inset-top)); display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; max-width:calc(100vw - 112px); }
+  #top .btn { height:38px; min-width:38px; padding:0 10px; font-size:13px; border-radius:10px; touch-action:manipulation; }
   #pad { position:absolute; right:max(16px,env(safe-area-inset-right)); bottom:max(16px,env(safe-area-inset-bottom)); display:grid; grid-template-columns:repeat(3,56px); grid-template-rows:repeat(3,56px); gap:6px; }
   #pad .btn { width:56px; height:56px; min-width:0; padding:0; font-size:20px; }
   #zoom { position:absolute; left:max(16px,env(safe-area-inset-left)); bottom:max(16px,env(safe-area-inset-bottom)); display:flex; gap:8px; align-items:center; }
@@ -68,11 +69,11 @@
   <div class="state" id="bigState">Conectando…</div>
   <div id="title" class="ui"></div>
   <div id="top" class="ui">
-    <button class="btn" id="snd">Sonido</button>
-    <button class="btn" id="recBtn">Grabaciones</button>
+    <button class="btn" id="snd" title="Sonido">Audio</button>
+    <button class="btn" id="recBtn" title="Grabaciones">Grab.</button>
     <button class="btn" id="pip" style="display:none">PiP</button>
     <button class="btn" id="hd">HD</button>
-    <button class="btn" id="back">Volver</button>
+    <button class="btn" id="back" title="Volver">✕</button>
   </div>
   <div id="zoom" class="ui">
     <span>Zoom</span>
