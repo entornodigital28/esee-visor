@@ -93,6 +93,7 @@
     <div id="micLevel" title="Nivel del micrófono"><i></i></div>
     <span>Sensibilidad</span><button class="btn" id="msDown">−</button><b id="msVal">3</b><button class="btn" id="msUp">+</button>
     <button class="btn" id="msDuck"></button>
+    <button class="btn" id="msHold"></button>
     <button class="btn" id="msMode"></button>
   </div>
   <div id="zoom" class="ui">
@@ -293,7 +294,9 @@ function soundFeed(payload) {
   for (let i = 0; i < n; i++) out[i] = ALAW[payload[8 + i]];
   const src = ctx.createBufferSource(); src.buffer = buf; src.connect(sound.gain);
   // acompañar la demora del video para que no se adelante el sonido
-  const v = bigSink.video, b = v.buffered, lag = b.length ? Math.max(0.05, Math.min(3, b.end(b.length - 1) - v.currentTime)) : 0.5;
+  const v = bigSink.video, b = v.buffered;
+  // en modo Hablar se prioriza escuchar cuanto antes, aunque quede un poco adelantado respecto de la imagen
+  const lag = mic.on ? 0.08 : b.length ? Math.max(0.05, Math.min(3, b.end(b.length - 1) - v.currentTime)) : 0.5;
   const want = ctx.currentTime + lag;
   if (sound.next < ctx.currentTime + 0.02 || Math.abs(sound.next - want) > 0.4) sound.next = want;
   src.start(sound.next); sound.next += n / 8000;
@@ -430,7 +433,7 @@ async function micStart() {
       const now = Date.now();
       if (loud) quietSince = 0; else if (!quietSince) quietSince = now;
       const was = speaking;
-      speaking = loud || (speaking && now - quietSince < 700); // sostener un poco para no cortar palabras
+      speaking = loud || (speaking && now - quietSince < o.hold); // sostener un poco para no cortar palabras
       if (speaking) {
         let body = batch;
         if (!was && prev) { body = new Uint8Array(prev.length + batch.length); body.set(prev); body.set(batch, prev.length); } // no comerse el arranque
@@ -465,10 +468,11 @@ function micStop() {
 }
 // Ajustes de "Hablar", guardados en cada dispositivo (cada micrófono es distinto)
 const MIC_THR = [0.06, 0.035, 0.02, 0.011, 0.005]; // sensibilidad 1 (solo voz fuerte) a 5 (capta todo)
+const MIC_HOLD = [200, 400, 700, 1000, 1500, 2500]; // cuánto se espera tras la última palabra antes de soltar (ms)
 function micOpts() {
-  let sens = 3, duck = true, always = false;
-  try { sens = Math.max(1, Math.min(5, parseInt(localStorage.getItem('micSens') || '3', 10) || 3)); duck = localStorage.getItem('micDuck') !== '0'; always = localStorage.getItem('micAlways') === '1'; } catch (e) {}
-  return { sens, duck, always };
+  let sens = 3, duck = true, always = false, hold = 700;
+  try { sens = Math.max(1, Math.min(5, parseInt(localStorage.getItem('micSens') || '3', 10) || 3)); duck = localStorage.getItem('micDuck') !== '0'; always = localStorage.getItem('micAlways') === '1'; hold = MIC_HOLD.includes(+localStorage.getItem('micHold')) ? +localStorage.getItem('micHold') : 700; } catch (e) {}
+  return { sens, duck, always, hold };
 }
 function micSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} micCfgShow(true); }
 function micCfgShow(on) {
@@ -477,11 +481,14 @@ function micCfgShow(on) {
   $('#msVal').textContent = o.sens;
   $('#msDuck').textContent = 'Silenciar cámara al hablar: ' + (o.duck ? 'sí' : 'no');
   $('#msMode').textContent = o.always ? 'Modo: continuo' : 'Modo: automático';
+  $('#msHold').textContent = 'Espera al callar: ' + String(o.hold / 1000).replace('.', ',') + ' s';
+  $('#msHold').style.display = o.always ? 'none' : '';
 }
 $('#msDown').addEventListener('click', () => micSet('micSens', micOpts().sens - 1));
 $('#msUp').addEventListener('click', () => micSet('micSens', micOpts().sens + 1));
 $('#msDuck').addEventListener('click', () => micSet('micDuck', micOpts().duck ? '0' : '1'));
 $('#msMode').addEventListener('click', () => micSet('micAlways', micOpts().always ? '0' : '1'));
+$('#msHold').addEventListener('click', () => micSet('micHold', MIC_HOLD[(MIC_HOLD.indexOf(micOpts().hold) + 1) % MIC_HOLD.length]));
 $('#mic').addEventListener('click', () => (mic.on ? micStop() : micStart()));
 document.addEventListener('visibilitychange', () => { if (document.hidden) micStop(); });
 
