@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { Kp2pClient, PTZ } = require('./lib/kp2p');
 const { Fmp4Muxer, TIMESCALE } = require('./lib/fmp4');
+const { RecSearch, replay, dvrNow } = require('./lib/recordings');
 
 const ROOT = __dirname;
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
@@ -174,6 +175,8 @@ function ptz(channel, action, speed) {
   return true;
 }
 
+const recSearch = new RecSearch(cfg);
+
 // ---------- HTTP ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const validChannel = (ch) => Number.isInteger(ch) && cams.cameras.some((c) => c.channel === ch);
@@ -223,6 +226,26 @@ const server = http.createServer(async (req, res) => {
       if (!seg) { res.writeHead(404); return res.end(); }
       res.writeHead(200, { 'Content-Type': 'video/iso.segment', 'Cache-Control': 'no-store' });
       return res.end(seg.data);
+    }
+
+    // Grabaciones de un día: /api/rec/list?ch=0&day=2026-11-11
+    if (p === '/api/rec/list') {
+      const ch = Number(url.searchParams.get('ch'));
+      const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(url.searchParams.get('day') || '');
+      if (!validChannel(ch) || !d) return json(res, 400, { error: 'pedido inválido' });
+      const begin = Date.UTC(+d[1], +d[2] - 1, +d[3]) / 1000;
+      try { return json(res, 200, { begin, now: dvrNow(), segs: await recSearch.day(ch, begin) }); }
+      catch (e) { log('búsqueda de grabaciones:', e.message); return json(res, 502, { error: e.message }); }
+    }
+
+    // Reproducir grabación: /rec?ch=0&t=<segundos DVR>
+    if (p === '/rec') {
+      const ch = Number(url.searchParams.get('ch')), t = Math.floor(Number(url.searchParams.get('t')));
+      if (!validChannel(ch) || !(t > 0)) return json(res, 400, { error: 'pedido inválido' });
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      res.socket.setNoDelay(true);
+      replay(cfg, ch, t, res, log);
+      return;
     }
 
     // Diagnóstico que mandan las pantallas: se guarda lo último de cada dispositivo en diag.log

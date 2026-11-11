@@ -39,6 +39,19 @@
   #zoom span { color:var(--dim); font-size:12px; margin-right:2px; }
   #hint { position:absolute; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); color:var(--dim); font-size:12px; background:var(--glass); padding:4px 10px; border-radius:6px; white-space:nowrap; }
   @media (max-width:700px) { #hint { display:none; } }
+  #rec { position:absolute; left:0; right:0; bottom:0; display:none; flex-direction:column; gap:6px; padding:26px max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background:linear-gradient(transparent,rgba(0,0,0,.82) 38%); }
+  #single.rec #rec { display:flex; }
+  #single.rec #pad, #single.rec #zoom, #single.rec #hint, #single.rec #hd { display:none !important; }
+  #rec .row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  #rec .sp { flex:1; }
+  .btn.sm { height:40px; min-width:40px; padding:0 11px; font-size:13px; border-radius:10px; touch-action:manipulation; }
+  .btn:disabled { opacity:.35; }
+  #rDate { font-weight:600; min-width:78px; text-align:center; }
+  #rClock { font:600 20px ui-monospace,Menlo,Consolas,monospace; margin-left:8px; }
+  #rSpan { color:var(--dim); font-size:12px; min-width:44px; text-align:center; }
+  #tl { width:100%; height:58px; display:block; border-radius:8px; touch-action:none; cursor:pointer; }
+  #recKey { color:var(--dim); font-size:11px; }
+  #recKey i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 10px; vertical-align:-1px; }
   #ver { position:fixed; right:10px; bottom:6px; color:#3b434d; font-size:10px; pointer-events:none; }
 </style>
 </head>
@@ -49,6 +62,7 @@
   <div class="state" id="bigState">Conectando…</div>
   <div id="title" class="ui"></div>
   <div id="top" class="ui">
+    <button class="btn" id="recBtn">Grabaciones</button>
     <button class="btn" id="pip" style="display:none">PiP</button>
     <button class="btn" id="hd">HD</button>
     <button class="btn" id="back">Volver</button>
@@ -62,6 +76,26 @@
     <span></span><button class="btn" data-ptz="up">▲</button><span></span>
     <button class="btn" data-ptz="left">◀</button><span></span><button class="btn" data-ptz="right">▶</button>
     <span></span><button class="btn" data-ptz="down">▼</button><span></span>
+  </div>
+  <div id="rec" class="ui">
+    <div class="row">
+      <button class="btn sm" id="rDayPrev">◀</button><span id="rDate"></span><button class="btn sm" id="rDayNext">▶</button>
+      <span id="rClock">--:--:--</span>
+      <span id="recKey"><i style="background:#2f6fbd"></i>grabado<i style="background:#ff9d2e"></i>movimiento</span>
+      <span class="sp"></span>
+      <button class="btn sm" id="rZoomOut">−</button><span id="rSpan">24 h</span><button class="btn sm" id="rZoomIn">+</button>
+    </div>
+    <canvas id="tl"></canvas>
+    <div class="row">
+      <button class="btn sm" id="rPrevEv">⏮ Mov.</button>
+      <button class="btn sm" id="rBack">−10 s</button>
+      <button class="btn sm" id="rPlay">⏸</button>
+      <button class="btn sm" id="rFwd">+10 s</button>
+      <button class="btn sm" id="rNextEv">Mov. ⏭</button>
+      <button class="btn sm" id="rSpeed">1x</button>
+      <span class="sp"></span>
+      <button class="btn sm" id="rLive">En vivo</button>
+    </div>
   </div>
   <div id="hint" class="ui">Flechas: mover · OK: calidad · +/−: zoom · Atrás: volver</div>
 </div>
@@ -249,7 +283,7 @@ function playBig() {
   $('#hd').classList.toggle('on', hd);
 }
 function openCam(i, push = true) {
-  cur = i; hd = false; stopGrid();
+  recExit(false); cur = i; hd = false; stopGrid();
   const c = cameras[i];
   $('#title').textContent = c.name;
   $('#pad').style.display = $('#zoom').style.display = c.ptz ? '' : 'none';
@@ -258,13 +292,13 @@ function openCam(i, push = true) {
 }
 function closeCam() {
   if (cur < 0) return;
-  ptzStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
+  recExit(false); ptzStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
   single.classList.remove('on'); const was = cur; cur = -1; select(was); startGrid();
 }
-function goBack() { if (history.state && history.state.cam !== undefined) history.back(); else closeCam(); }
+function goBack() { if (rec.on) return recExit(); if (history.state && history.state.cam !== undefined) history.back(); else closeCam(); }
 window.addEventListener('popstate', () => closeCam());
 
-function wake() { single.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => single.classList.add('idle'), 5000); }
+function wake() { single.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (!(rec.on && (!rec.playing || rec.scrubW0 !== null))) single.classList.add('idle'); }, rec.on ? 8000 : 5000); }
 ['pointermove', 'pointerdown', 'keydown'].forEach((e) => window.addEventListener(e, wake, { passive: true }));
 
 // ---------- Movimiento ----------
@@ -287,6 +321,7 @@ $('#hd').addEventListener('click', () => { hd = !hd; playBig(); });
 // ---------- Teclado / control remoto ----------
 const KEY_PTZ = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', '+': 'zoomIn', '=': 'zoomIn', '-': 'zoomOut', MediaFastForward: 'zoomIn', MediaRewind: 'zoomOut', PageUp: 'zoomIn', PageDown: 'zoomOut' };
 window.addEventListener('keydown', (e) => {
+  if (cur >= 0 && rec.on) { recKey(e); return; }
   if (cur >= 0) {
     if (KEY_PTZ[e.key]) { e.preventDefault(); if (cameras[cur].ptz) ptzStart(KEY_PTZ[e.key]); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.repeat) { hd = !hd; playBig(); } }
@@ -307,6 +342,7 @@ window.addEventListener('blur', ptzStop);
 
 // Pausar video cuando la página no se ve (ahorra batería y ancho de banda)
 document.addEventListener('visibilitychange', () => {
+  if (rec.on) { if (document.hidden && !inPip()) recSetPlaying(false); return; }
   if (document.hidden) { ptzStop(); if (inPip()) return; if (cur >= 0) { bigConn && bigConn.stop(); } else stopGrid(); }
   else if (inPip()) return; else if (cur >= 0) playBig(); else startGrid();
 });
@@ -323,6 +359,215 @@ if (pipWebkit || document.pictureInPictureEnabled) {
       else if (inPip()) document.exitPictureInPicture(); else bigV.requestPictureInPicture().catch(() => {});
     } catch (e) {}
   });
+}
+
+// ---------- Grabaciones ----------
+// Las horas son "segundos DVR": hora de pared como si fuera UTC (por eso se formatean con getUTC*).
+const SPANS = [86400, 21600, 3600, 600], SPAN_LABEL = ['24 h', '6 h', '1 h', '10 min'], SPEEDS = [1, 2, 4, 8];
+const DAYS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const rec = { on: false, day: 0, segs: [], events: [], nowBase: 0, nowAt: 0, zoom: 0, cursor: 0, target: 0, anchors: [], playing: true, speed: 0, pendingT: null, scrubW0: null, abort: null, timer: null, ended: false, gen: 0, listAt: 0 };
+const tl = $('#tl'), tlx = tl.getContext('2d');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const p2 = (n) => String(n).padStart(2, '0');
+const hms = (t) => { const d = new Date(t * 1000); return p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes()) + ':' + p2(d.getUTCSeconds()); };
+const dayKey = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+function recNow() { return rec.nowBase + (performance.now() - rec.nowAt) / 1000; }
+
+async function recLoadDay() {
+  const gen = rec.gen, day = rec.day;
+  try {
+    const r = await fetch(`/api/rec/list?ch=${cameras[cur].channel}&day=${dayKey(day)}`, { cache: 'no-store' });
+    const j = await r.json();
+    if (gen !== rec.gen || day !== rec.day || !j.segs) return;
+    rec.segs = j.segs; rec.nowBase = j.now; rec.nowAt = performance.now(); rec.listAt = Date.now();
+    rec.events = [];
+    for (const s of j.segs) { // eventos: tramos de movimiento, unidos si están pegados
+      if (s[2] !== 2) continue;
+      const last = rec.events[rec.events.length - 1];
+      if (last && s[0] - last[1] <= 10) last[1] = s[1]; else rec.events.push([s[0], s[1]]);
+    }
+  } catch (e) { /* se reintenta con el refresco periódico */ }
+  recDraw();
+}
+
+function recWall() { // hora de lo que se está viendo
+  const ct = bigV.currentTime; let a = null;
+  for (const x of rec.anchors) { if (x.m <= ct + 0.02) a = x; else break; }
+  return a ? a.ts / 1000 + (ct - a.m) : rec.target;
+}
+
+async function recPlay(t) {
+  if (rec.abort) rec.abort.abort();
+  const gen = ++rec.gen, ac = rec.abort = new AbortController();
+  rec.target = rec.cursor = t; rec.anchors = []; rec.ended = false;
+  bigSink.clear(); bigSink.active = true; bigSink.say('Cargando…');
+  if (!MS) { bigSink.say('Este dispositivo no puede reproducir grabaciones'); return; }
+  try {
+    const resp = await fetch(`/rec?ch=${cameras[cur].channel}&t=${Math.floor(t)}`, { signal: ac.signal, cache: 'no-store' });
+    if (!resp.ok || !resp.body) throw new Error('sin respuesta');
+    const reader = resp.body.getReader();
+    let buf = new Uint8Array(0);
+    for (;;) {
+      // no adelantarse: si ya hay bastante cargado, dejar de leer (el servidor pausa al DVR)
+      for (;;) {
+        if (gen !== rec.gen) return;
+        const b = bigV.buffered, ahead = b.length ? b.end(b.length - 1) - bigV.currentTime : 0;
+        if (ahead < 20 * SPEEDS[rec.speed]) break;
+        await sleep(200);
+      }
+      const { done, value } = await reader.read();
+      if (done || gen !== rec.gen) break;
+      if (buf.length) { const nb = new Uint8Array(buf.length + value.length); nb.set(buf); nb.set(value, buf.length); buf = nb; } else buf = value;
+      let off = 0;
+      while (buf.length - off >= 6) {
+        const len = ((buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3]) >>> 0;
+        if (buf.length - off - 4 < len) break;
+        const type = buf[off + 4], payload = buf.slice(off + 6, off + 4 + len);
+        off += 4 + len;
+        if (type === 0) bigSink.onMeta(JSON.parse(new TextDecoder().decode(payload)));
+        else if (type === 1) bigSink.onInit(payload);
+        else if (type === 2 || type === 3) bigSink.onFrag(payload, type === 3);
+        else if (type === 5) rec.anchors.push(JSON.parse(new TextDecoder().decode(payload)));
+        else if (type === 7) rec.ended = true;
+      }
+      buf = buf.subarray(off);
+    }
+    if (gen === rec.gen && !bigV.buffered.length) bigSink.say('No hay grabación en ese momento');
+  } catch (e) { if (gen === rec.gen && e.name !== 'AbortError') bigSink.say('No se pudo cargar la grabación'); }
+}
+
+function recSeek(t) {
+  t = Math.max(rec.day - 86400 * 400, Math.min(t, recNow() - 8));
+  const d = Math.floor(t / 86400) * 86400;
+  if (d !== rec.day) { rec.day = d; rec.segs = []; rec.events = []; recLoadDay(); }
+  // si ese momento ya está cargado, saltar al instante
+  const b = bigV.buffered;
+  if (b.length && bigSink.sb) {
+    for (let i = 0; i < rec.anchors.length; i++) {
+      const a = rec.anchors[i], n = rec.anchors[i + 1], m = a.m + (t - a.ts / 1000);
+      if (m >= a.m && (!n || m < n.m) && m >= b.start(0) && m <= b.end(b.length - 1) - 0.5) { bigV.currentTime = m; rec.cursor = t; recDraw(); return; }
+    }
+  }
+  recPlay(t);
+}
+let nudgeTimer = null;
+function recNudge(d) { // varias pulsaciones seguidas se suman en un solo salto
+  rec.pendingT = (rec.pendingT === null ? rec.cursor : rec.pendingT) + d;
+  clearTimeout(nudgeTimer); nudgeTimer = setTimeout(() => { const t = rec.pendingT; rec.pendingT = null; recSeek(t); }, 350);
+  recDraw();
+}
+function recEvent(dir) {
+  const c = rec.pendingT === null ? rec.cursor : rec.pendingT;
+  let ev = null;
+  if (dir > 0) ev = rec.events.find((e) => e[0] > c + 3); else for (const e of rec.events) { if (e[0] < c - 8) ev = e; else break; }
+  if (ev) recSeek(Math.max(rec.day, ev[0] - 2)); else bigSink.say(dir > 0 ? 'No hay más movimiento este día' : 'No hay movimiento anterior este día'), setTimeout(() => { if (bigV.readyState >= 2) bigSink.say(''); }, 1800);
+}
+function recSetPlaying(on) { rec.playing = on; $('#rPlay').textContent = on ? '⏸' : '▶'; if (on) bigV.play().catch(() => {}); else bigV.pause(); }
+function recSetDay(d) { const tod = rec.cursor - rec.day; rec.day = d; rec.segs = []; rec.events = []; rec.gen++; recLoadDay(); recPlay(Math.min(d + tod, recNow() - 30)); }
+
+function recWindow() {
+  const span = SPANS[rec.zoom];
+  if (rec.scrubW0 !== null) return [rec.scrubW0, span];
+  if (span >= 86400) return [rec.day, span];
+  const c = rec.pendingT === null ? rec.cursor : rec.pendingT;
+  return [Math.max(rec.day, Math.min(c - span / 2, rec.day + 86400 - span)), span];
+}
+function recDraw() {
+  if (!rec.on) return;
+  const dpr = window.devicePixelRatio || 1, W = tl.clientWidth, H = tl.clientHeight;
+  if (tl.width !== Math.round(W * dpr) || tl.height !== Math.round(H * dpr)) { tl.width = Math.round(W * dpr); tl.height = Math.round(H * dpr); }
+  const g = tlx; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const [w0, span] = recWindow(), X = (t) => (t - w0) / span * W, top = 16, bh = H - top;
+  g.fillStyle = '#1b2027'; g.fillRect(0, top, W, bh);
+  for (const pass of [1, 2]) { // primero continua, encima movimiento
+    g.fillStyle = pass === 1 ? '#2f6fbd' : '#ff9d2e';
+    for (const s of rec.segs) { if (s[2] !== pass || s[1] < w0 || s[0] > w0 + span) continue; const x = X(s[0]); g.fillRect(x, top + (pass === 2 ? 0 : bh * 0.35), Math.max(1, X(s[1]) - x), pass === 2 ? bh : bh * 0.65); }
+  }
+  const now = recNow(); if (now < w0 + span) { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(Math.max(0, X(now)), top, W, bh); }
+  // marcas de hora
+  const step = span >= 86400 ? 7200 : span >= 21600 ? 3600 : span >= 3600 ? 600 : 60;
+  g.font = '11px system-ui,sans-serif'; g.textBaseline = 'top'; g.fillStyle = '#9aa5b1'; g.strokeStyle = 'rgba(255,255,255,.22)'; g.lineWidth = 1;
+  for (let t = Math.ceil(w0 / step) * step; t <= w0 + span; t += step) {
+    const x = Math.round(X(t)) + 0.5; g.beginPath(); g.moveTo(x, top); g.lineTo(x, top + 6); g.stroke();
+    const d = new Date(t * 1000), label = step >= 3600 ? p2(d.getUTCHours()) : p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes());
+    const tw = g.measureText(label).width; if (x - tw / 2 > 0 && x + tw / 2 < W) g.fillText(label, x - tw / 2, 1);
+  }
+  const c = rec.pendingT === null ? rec.cursor : rec.pendingT, cx = Math.round(X(c)) + 0.5;
+  g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.moveTo(cx, top - 3); g.lineTo(cx, H); g.stroke();
+  const dd = new Date(rec.day * 1000);
+  $('#rDate').textContent = DAYS[dd.getUTCDay()] + ' ' + p2(dd.getUTCDate()) + '/' + p2(dd.getUTCMonth() + 1);
+  $('#rClock').textContent = hms(c);
+  $('#rSpan').textContent = SPAN_LABEL[rec.zoom];
+  $('#rDayNext').disabled = rec.day + 86400 > recNow();
+}
+
+function recTick() {
+  if (!rec.on) return;
+  const v = bigV, sb = bigSink.sb;
+  if (sb && v.buffered.length) {
+    const start = v.buffered.start(0), end = v.buffered.end(v.buffered.length - 1);
+    if (v.currentTime < start - 0.05) v.currentTime = start;
+    if (v.playbackRate !== SPEEDS[rec.speed]) v.playbackRate = SPEEDS[rec.speed];
+    if (rec.playing && v.paused) v.play().catch(() => {});
+    if (!sb.updating && v.currentTime - start > 45) { try { sb.remove(start, v.currentTime - 20); } catch (e) {} }
+    if (rec.pendingT === null && rec.scrubW0 === null) rec.cursor = recWall();
+    if (rec.ended && end - v.currentTime < 0.3) bigSink.say('Fin de lo grabado');
+    if (rec.cursor >= rec.day + 86400) { rec.day += 86400; rec.segs = []; rec.events = []; recLoadDay(); }
+  }
+  if (rec.day + 86400 > recNow() && Date.now() - rec.listAt > 60000) { rec.listAt = Date.now(); recLoadDay(); } // hoy sigue creciendo
+  recDraw();
+}
+
+async function recEnter() {
+  if (cur < 0 || rec.on) return;
+  ptzStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
+  rec.on = true; rec.gen++; rec.zoom = 0; rec.speed = 0; rec.pendingT = null; rec.scrubW0 = null; rec.segs = []; rec.events = [];
+  single.classList.add('rec'); $('#rSpeed').textContent = '1x'; recSetPlaying(true);
+  rec.nowBase = Date.now() / 1000 - new Date().getTimezoneOffset() * 60; rec.nowAt = performance.now();
+  rec.day = Math.floor(rec.nowBase / 86400) * 86400; rec.cursor = rec.target = rec.nowBase - 90;
+  clearInterval(rec.timer); rec.timer = setInterval(recTick, 250);
+  recDraw();
+  await recLoadDay();
+  if (rec.on) recPlay(recNow() - 90); // arrancar un minuto y medio atrás
+}
+function recExit(resumeLive = true) {
+  if (!rec.on) return;
+  rec.on = false; rec.gen++; clearInterval(rec.timer); clearTimeout(nudgeTimer);
+  if (rec.abort) rec.abort.abort();
+  bigV.playbackRate = 1; bigSink.clear(); single.classList.remove('rec');
+  if (resumeLive && cur >= 0) playBig();
+}
+
+$('#recBtn').addEventListener('click', () => (rec.on ? recExit() : recEnter()));
+$('#rLive').addEventListener('click', () => recExit());
+$('#rPlay').addEventListener('click', () => recSetPlaying(!rec.playing));
+$('#rBack').addEventListener('click', () => recNudge(-10));
+$('#rFwd').addEventListener('click', () => recNudge(10));
+$('#rPrevEv').addEventListener('click', () => recEvent(-1));
+$('#rNextEv').addEventListener('click', () => recEvent(1));
+$('#rSpeed').addEventListener('click', () => { rec.speed = (rec.speed + 1) % SPEEDS.length; $('#rSpeed').textContent = SPEEDS[rec.speed] + 'x'; bigV.playbackRate = SPEEDS[rec.speed]; });
+$('#rZoomIn').addEventListener('click', () => { rec.zoom = Math.min(SPANS.length - 1, rec.zoom + 1); recDraw(); });
+$('#rZoomOut').addEventListener('click', () => { rec.zoom = Math.max(0, rec.zoom - 1); recDraw(); });
+$('#rDayPrev').addEventListener('click', () => recSetDay(rec.day - 86400));
+$('#rDayNext').addEventListener('click', () => { if (rec.day + 86400 <= recNow()) recSetDay(rec.day + 86400); });
+// arrastrar sobre la línea de tiempo
+function tlTime(e) { const r = tl.getBoundingClientRect(), [w0, span] = recWindow(); return w0 + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * span; }
+tl.addEventListener('pointerdown', (e) => { e.preventDefault(); tl.setPointerCapture(e.pointerId); rec.scrubW0 = recWindow()[0]; rec.pendingT = tlTime(e); recDraw(); });
+tl.addEventListener('pointermove', (e) => { if (rec.scrubW0 === null) return; rec.pendingT = tlTime(e); recDraw(); });
+const tlUp = () => { if (rec.scrubW0 === null) return; const t = rec.pendingT; rec.scrubW0 = null; rec.pendingT = null; if (t !== null) recSeek(t); };
+tl.addEventListener('pointerup', tlUp); tl.addEventListener('pointercancel', tlUp);
+window.addEventListener('resize', recDraw);
+
+function recKey(e) { // teclado / control remoto en modo grabaciones
+  const k = e.key;
+  if (k === 'ArrowLeft') recNudge(e.repeat ? -30 : -10); else if (k === 'ArrowRight') recNudge(e.repeat ? 30 : 10);
+  else if (k === 'ArrowUp') { if (!e.repeat) recEvent(1); } else if (k === 'ArrowDown') { if (!e.repeat) recEvent(-1); }
+  else if (k === 'Enter' || k === ' ' || k === 'MediaPlayPause') { if (!e.repeat) recSetPlaying(!rec.playing); }
+  else if (k === '+' || k === '=') $('#rZoomIn').click(); else if (k === '-') $('#rZoomOut').click();
+  else if (k === 'MediaFastForward') { if (!e.repeat) $('#rSpeed').click(); } else if (k === 'MediaRewind') recNudge(-60);
+  else if (k === 'Escape' || k === 'Backspace' || k === 'GoBack' || k === 'BrowserBack') recExit();
+  else return;
+  e.preventDefault();
 }
 
 // ---------- Arranque y actualización automática ----------
