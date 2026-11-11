@@ -26,13 +26,14 @@
 
   #single { position:fixed; inset:0; background:#000; display:none; }
   #single.on { display:block; }
-  #title { left:max(12px,env(safe-area-inset-left)); top:max(12px,env(safe-area-inset-top)); font-size:15px; }
+  #back { position:absolute; left:max(12px,env(safe-area-inset-left)); top:max(12px,env(safe-area-inset-top)); height:38px; min-width:38px; padding:0 10px; font-size:15px; border-radius:10px; touch-action:manipulation; }
+  #title { left:calc(max(12px,env(safe-area-inset-left)) + 46px); top:calc(max(12px,env(safe-area-inset-top)) + 7px); font-size:15px; }
   .ui { transition:opacity .25s; }
   #single.idle .ui { opacity:0; pointer-events:none; }
   .btn { background:var(--glass); color:var(--text); border:1px solid rgba(255,255,255,.16); border-radius:12px; font:600 15px system-ui,sans-serif; min-width:52px; height:52px; padding:0 14px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); touch-action:none; }
   .btn:active, .btn.down { background:var(--accent); color:#001a33; }
   .btn.on { border-color:var(--accent); color:var(--accent); }
-  #top { position:absolute; right:max(12px,env(safe-area-inset-right)); top:max(12px,env(safe-area-inset-top)); display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; max-width:calc(100vw - 112px); }
+  #top { position:absolute; right:max(12px,env(safe-area-inset-right)); top:max(12px,env(safe-area-inset-top)); display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; max-width:calc(100vw - 170px); }
   #top .btn { height:38px; min-width:38px; padding:0 10px; font-size:13px; border-radius:10px; touch-action:manipulation; }
   #settings { font-size:19px !important; }
   #camSettings { position:fixed; inset:0; z-index:12; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(0,0,0,.68); }
@@ -107,6 +108,7 @@
 <div id="single">
   <video id="big" muted playsinline autoplay></video>
   <div class="state" id="bigState">Conectando…</div>
+  <button class="btn ui" id="back" title="Volver">✕</button>
   <div id="title" class="ui"></div>
   <div id="top" class="ui">
     <button class="btn" id="mic" title="Hablar por el parlante de la cámara" style="display:none">Hablar</button>
@@ -115,7 +117,6 @@
     <button class="btn" id="pip" style="display:none">PiP</button>
     <button class="btn" id="settings" title="Ajustes de cámara" aria-label="Ajustes de cámara">⚙</button>
     <button class="btn" id="hd">HD</button>
-    <button class="btn" id="back" title="Volver">✕</button>
   </div>
   <div id="micCfg">
     <div id="micLevel" title="Nivel del micrófono"><i></i></div>
