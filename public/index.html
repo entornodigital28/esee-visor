@@ -524,10 +524,31 @@ document.addEventListener('visibilitychange', () => {
 // ---------- Imagen flotante (PiP): seguir viendo la cámara mientras usás otra app ----------
 const bigV = $('#big');
 const pipWebkit = !!(bigV.webkitSupportsPresentationMode && bigV.webkitSupportsPresentationMode('picture-in-picture'));
+const homeScreenApp = navigator.standalone === true || ['standalone', 'fullscreen'].some((mode) => matchMedia(`(display-mode: ${mode})`).matches);
 function inPip() { return !!document.pictureInPictureElement || bigV.webkitPresentationMode === 'picture-in-picture'; }
-if (pipWebkit || document.pictureInPictureEnabled) {
+let pipTaps = 0, pipTapAt = 0, pipTapReset;
+function openCameraInSafari() {
+  const target = new URL(location.href);
+  target.searchParams.set('cam', String(cur));
+  if (target.protocol === 'https:') {
+    // Esquema de iOS para abrir esta misma dirección directamente en Safari.
+    location.href = `x-safari-https://${target.host}${target.pathname}${target.search}${target.hash}`;
+  } else {
+    // En HTTP no existe el esquema x-safari-https; abrir la URL en otra ventana como alternativa.
+    window.open(target.href, '_blank');
+  }
+}
+if (pipWebkit || document.pictureInPictureEnabled || homeScreenApp) {
   $('#pip').style.display = '';
   $('#pip').addEventListener('click', () => {
+    if (homeScreenApp) {
+      const now = Date.now();
+      pipTaps = now - pipTapAt <= 2500 ? pipTaps + 1 : 1;
+      pipTapAt = now;
+      clearTimeout(pipTapReset);
+      pipTapReset = setTimeout(() => { pipTaps = 0; }, 2500);
+      if (pipTaps >= 4) { pipTaps = 0; openCameraInSafari(); return; }
+    }
     try {
       if (pipWebkit) bigV.webkitSetPresentationMode(inPip() ? 'inline' : 'picture-in-picture');
       else if (inPip()) document.exitPictureInPicture(); else bigV.requestPictureInPicture().catch(() => {});
@@ -856,7 +877,13 @@ async function info() { const r = await fetch('/api/info', { cache: 'no-store' }
 async function boot() {
   try {
     const i = await info(); version = i.version; cameras = i.cameras; $('#ver').textContent = 'v' + version;
-    buildGrid(); startGrid(); faceOffer(i.pin);
+    buildGrid();
+    const camParam = new URLSearchParams(location.search).get('cam');
+    const requestedCam = camParam === null ? NaN : Number(camParam);
+    if (Number.isInteger(requestedCam) && requestedCam >= 0 && requestedCam < cameras.length) {
+      select(requestedCam); openCam(requestedCam, false);
+    } else startGrid();
+    faceOffer(i.pin);
   } catch (e) { grid.innerHTML = '<div class="state">No se pudo conectar con el servidor. Reintentando…</div>'; setTimeout(boot, 3000); }
 }
 setInterval(() => {
