@@ -190,6 +190,13 @@
 <div id="ver"></div>
 
 <script>
+// En iPhone/iPad, abierta desde el ícono en modo app no hay imagen flotante (PiP): saltar a Safari de entrada.
+// Para quedarse en modo app, abrir con ?app=1 (por ejemplo, un ícono creado desde esa dirección).
+if (navigator.standalone === true && /iPhone|iPad/.test(navigator.userAgent) && location.protocol === 'https:' && !/[?&]app=1/.test(location.search)) {
+  location.replace('x-safari-https://' + location.host + location.pathname + location.search + location.hash);
+}
+</script>
+<script>
 'use strict';
 const $ = (s) => document.querySelector(s);
 const MS = window.ManagedMediaSource || window.MediaSource;

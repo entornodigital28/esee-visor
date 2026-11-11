@@ -28,6 +28,10 @@
   <div id="e"></div>
 </form>
 <script>
+// Igual que en la página principal: desde el ícono en modo app, saltar a Safari (ahí funciona el PiP)
+if (navigator.standalone === true && /iPhone|iPad/.test(navigator.userAgent) && location.protocol === 'https:' && !/[?&]app=1/.test(location.search)) {
+  location.replace('x-safari-https://' + location.host + location.pathname + location.search + location.hash);
+}
 // ---------- Face ID / huella (llave de acceso) ----------
 const b64u = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
