@@ -378,6 +378,18 @@ const server = http.createServer(async (req, res) => {
       catch (e) { log('búsqueda de grabaciones:', e.message); return json(res, 502, { error: e.message }); }
     }
 
+    // Descargar un tramo como MP4: /api/rec/export?ch=0&start=<segundos DVR>&end=<segundos DVR>
+    if (p === '/api/rec/export') {
+      const ch = Number(url.searchParams.get('ch'));
+      const start = Number(url.searchParams.get('start')), end = Number(url.searchParams.get('end'));
+      if (!validChannel(ch) || !Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= start || end - start > 7200 || end > dvrNow()) return json(res, 400, { error: 'Tramo inválido (máximo 2 horas)' });
+      const stamp = new Date(start * 1000).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Disposition': `attachment; filename="camara-${ch}-${stamp}.mp4"`, 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      res.socket.setNoDelay(true);
+      replay(cfg, ch, start, res, log, end);
+      return;
+    }
+
     // Reproducir grabación: /rec?ch=0&t=<segundos DVR>
     if (p === '/rec') {
       const ch = Number(url.searchParams.get('ch')), t = Math.floor(Number(url.searchParams.get('t')));
