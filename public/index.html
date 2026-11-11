@@ -58,6 +58,10 @@
   #lock.on { display:flex; }
   #lock .btn { height:56px; padding:0 26px; font-size:17px; touch-action:manipulation; }
   #lockMsg { color:var(--dim); font-size:14px; min-height:1.4em; }
+  #lock .btn { min-width:220px; }
+  #lockForm { flex-direction:column; align-items:center; gap:12px; }
+  #lockPin { font:600 24px ui-monospace,Menlo,Consolas,monospace; letter-spacing:.3em; text-align:center; width:220px; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--tile); color:var(--text); outline:none; -webkit-user-select:text; user-select:text; }
+  #lockPin:focus { border-color:var(--accent); }
   #faceBar { position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:4; display:none; gap:8px; align-items:center; background:rgba(12,15,19,.92); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:8px 8px 8px 14px; font-size:14px; white-space:nowrap; }
   #faceBar .btn { height:40px; font-size:14px; touch-action:manipulation; white-space:nowrap; flex:none; }
   #faceBar span { min-width:0; }
@@ -114,7 +118,7 @@
 </div>
 <button id="faceChip">Activar Face ID</button>
 <div id="faceBar"><span>Entrar con tu cara</span><button class="btn on" id="faceOn">Activar Face ID</button><button class="btn" id="faceNo">Ahora no</button></div>
-<div id="lock"><div style="font-size:20px;font-weight:600">Cámaras</div><button class="btn on" id="lockBtn">Desbloquear</button><div id="lockMsg"></div></div>
+<div id="lock"><div style="font-size:20px;font-weight:600">Cámaras</div><button class="btn on" id="lockBtn">Entrar con Face ID</button><button class="btn" id="lockPinBtn">Entrar con PIN</button><form id="lockForm" style="display:none"><input id="lockPin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN"><button class="btn on">Entrar</button></form><div id="lockMsg"></div></div>
 <div id="ver"></div>
 
 <script>
@@ -778,12 +782,28 @@ function faceOffer(pinOn) { // ofrecer activar Face ID una vez, si el dispositiv
 // Bloqueo: con Face ID activado, la app pide la cara cada vez que se abre
 let hiddenAt = 0;
 function lockNeeded() { return faceOK && !!store.get('faceId') && sess.get('unlocked') !== '1'; }
+let unlocking = false;
+function unlocked() { sess.set('unlocked', '1'); $('#lock').classList.remove('on'); boot(); }
 async function unlock() {
+  if (unlocking) return; // nunca dos pedidos de Face ID a la vez
+  unlocking = true;
   const msg = $('#lockMsg'); msg.textContent = '';
-  try { await faceLogin(); sess.set('unlocked', '1'); $('#lock').classList.remove('on'); boot(); }
-  catch (e) { msg.textContent = e.name === 'NotAllowedError' ? 'Tocá Desbloquear para intentar de nuevo' : e.message; }
+  try { await faceLogin(); unlocked(); }
+  catch (e) { msg.textContent = e.name === 'NotAllowedError' ? 'Elegí cómo entrar' : e.message; }
+  unlocking = false;
 }
 $('#lockBtn').addEventListener('click', unlock);
+// Alternativa: entrar con el PIN, por si Face ID falla o no se quiere usar
+$('#lockPinBtn').addEventListener('click', () => { $('#lockForm').style.display = 'flex'; $('#lockPinBtn').style.display = 'none'; $('#lockPin').focus(); });
+$('#lockForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const msg = $('#lockMsg'); msg.textContent = '';
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: $('#lockPin').value }) });
+    if (r.ok) { $('#lockPin').value = ''; return unlocked(); }
+    msg.textContent = (await r.json().catch(() => ({}))).error || 'No se pudo entrar';
+  } catch (e) { msg.textContent = 'Sin conexión con el servidor'; }
+});
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   // al volver después de 5 minutos fuera, pedir la cara otra vez (salvo que haya quedado en imagen flotante)

@@ -54,7 +54,7 @@ document.getElementById('f').addEventListener('submit', async (ev) => {
   const e = document.getElementById('e'); e.textContent = '';
   try {
     const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: document.getElementById('pin').value }) });
-    if (r.ok) return location.reload();
+    if (r.ok) { try { sessionStorage.setItem('unlocked', '1'); } catch (z) {} return location.reload(); }
     e.textContent = (await r.json().catch(() => ({}))).error || 'No se pudo entrar';
   } catch (x) { e.textContent = 'Sin conexión con el servidor'; }
 });
