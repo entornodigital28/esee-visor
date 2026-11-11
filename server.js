@@ -249,9 +249,16 @@ function waitFor(test, ms) {
   return new Promise((resolve) => { const t0 = Date.now(); const tick = () => (test() || Date.now() - t0 > ms) ? resolve(test()) : setTimeout(tick, 150); tick(); });
 }
 
+// /safari: misma página, pero al agregarla a la pantalla de inicio del iPhone abre dentro de Safari
+// (sin modo app). Ahí sí funciona la imagen flotante (PiP), que iOS no permite en apps web a pantalla completa.
+function safariVariant(data) {
+  return data.toString('utf8').replace(/^s*<meta name="(apple-)?mobile-web-app-capable"[^>]*>?
+/gm, '').replace('manifest.webmanifest', 'manifest-safari.webmanifest');
+}
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
-  const p = url.pathname;
+  const safari = url.pathname === '/safari';
+  const p = safari ? '/' : url.pathname;
   let m;
   try {
     // --- acceso ---
@@ -309,8 +316,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!authed(req)) {
-      if (p === '/' || p === '/index.html') return fs.readFile(path.join(ROOT, 'public', 'login.html'), (err, data) => html(res, err ? 500 : 200, err ? 'error' : data));
-      if (p !== '/manifest.webmanifest') return json(res, 401, { error: 'Hace falta el PIN' });
+      if (p === '/' || p === '/index.html') return fs.readFile(path.join(ROOT, 'public', 'login.html'), (err, data) => html(res, err ? 500 : 200, err ? 'error' : safari ? safariVariant(data) : data));
+      if (!p.endsWith('.webmanifest')) return json(res, 401, { error: 'Hace falta el PIN' });
     }
 
     if (p === '/api/info') return json(res, 200, { version: VERSION, pin: !!PIN, cameras: cams.cameras.map((c) => ({ channel: c.channel, name: c.name, ptz: !!c.ptz })) });
@@ -406,7 +413,7 @@ const server = http.createServer(async (req, res) => {
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404); return res.end('no encontrado'); }
       res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-      res.end(data);
+      res.end(safari && rel === 'index.html' ? safariVariant(data) : data);
     });
   } catch (e) {
     log('error en', p, e.message);

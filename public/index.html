@@ -525,7 +525,9 @@ document.addEventListener('visibilitychange', () => {
 const bigV = $('#big');
 const pipWebkit = !!(bigV.webkitSupportsPresentationMode && bigV.webkitSupportsPresentationMode('picture-in-picture'));
 function inPip() { return !!document.pictureInPictureElement || bigV.webkitPresentationMode === 'picture-in-picture'; }
-if (pipWebkit || document.pictureInPictureEnabled) {
+// En iPhone, la app agregada a inicio (modo app) no permite PiP: para eso está la dirección /safari
+const standaloneIOS = navigator.standalone === true;
+if ((pipWebkit || document.pictureInPictureEnabled) && !standaloneIOS) {
   $('#pip').style.display = '';
   $('#pip').addEventListener('click', () => {
     try {

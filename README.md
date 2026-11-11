@@ -39,6 +39,7 @@ Abrí esa dirección en el navegador del dispositivo.
 
 - **Amazon Fire TV**: con el navegador Silk. Guardala en favoritos.
 - **iPhone / iPad**: en Safari, Compartir → "Agregar a inicio" para tenerla como app a pantalla completa.
+  - iOS no permite la imagen flotante (PiP) en apps web a pantalla completa. Si querés PiP, agregá a inicio la dirección terminada en `/safari` (por ejemplo `https://nombre-pc.tu-red.ts.net/safari`): ese ícono abre dentro de Safari, con PiP, pero con las barras del navegador.
 
 | Tecla / control | En la grilla | En una cámara |
 |---|---|---|
