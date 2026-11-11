@@ -225,6 +225,14 @@ const server = http.createServer(async (req, res) => {
       return res.end(seg.data);
     }
 
+    // Diagnóstico que mandan las pantallas: se guarda lo último de cada dispositivo en diag.log
+    if (p === '/api/diag' && req.method === 'POST') {
+      let body = '';
+      for await (const chunk of req) { body += chunk; if (body.length > 20000) break; }
+      fs.appendFile(path.join(ROOT, 'diag.log'), new Date().toISOString() + ' ' + req.socket.remoteAddress + ' ' + body.slice(0, 20000) + '\n', () => {});
+      return json(res, 200, { ok: true });
+    }
+
     if (p === '/api/ptz' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 2000) break; }

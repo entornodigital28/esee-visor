@@ -73,7 +73,17 @@ const MS = window.ManagedMediaSource || window.MediaSource;
 
 // ---------- Reproductor: una pantalla de video ----------
 class Sink {
-  constructor(video, stateEl) { this.video = video; this.stateEl = stateEl; this.ms = null; this.sb = null; this.queue = []; this.onFail = null; }
+  constructor(video, stateEl) {
+    this.video = video; this.stateEl = stateEl; this.ms = null; this.sb = null; this.queue = []; this.onFail = null;
+    this.n = { seek: 0, wait: 0, stall: 0, err: 0, meta: 0, appendErr: 0, bytes: 0 };
+    video.addEventListener("waiting", () => this.n.wait++); video.addEventListener("stalled", () => this.n.stall++); video.addEventListener("error", () => this.n.err++);
+  }
+  stats() {
+    const v = this.video, b = v.buffered, r = [];
+    for (let i = 0; i < b.length && i < 4; i++) r.push(+b.start(i).toFixed(2) + "-" + +b.end(i).toFixed(2));
+    const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : {};
+    return Object.assign({ t: +v.currentTime.toFixed(2), rs: v.readyState, p: v.paused ? 1 : 0, w: v.videoWidth, nr: b.length, r: r.join(" "), fr: q.totalVideoFrames, dr: q.droppedVideoFrames, e: v.error ? v.error.code + ":" + v.error.message : undefined }, this.n);
+  }
   say(t) { if (this.stateEl) { this.stateEl.textContent = t || ""; this.stateEl.classList.toggle("hide", !t); } }
   teardown() {
     this.ms = null; this.sb = null; this.queue = []; this.dead = false;
@@ -82,7 +92,7 @@ class Sink {
     this.video.removeAttribute("src"); try { this.video.load(); } catch (e) {}
   }
   onMeta(meta) {
-    this.teardown();
+    this.teardown(); this.n.meta++;
     const v = this.video, mime = `video/mp4; codecs="${meta.codec}"`;
     if (!MS.isTypeSupported(mime)) { this.dead = true; this.say("Este dispositivo no reproduce " + meta.codec); return; }
     const ms = this.ms = new MS();
@@ -95,20 +105,20 @@ class Sink {
       this.pump(); v.play().catch(() => {});
     }, { once: true });
   }
-  onData(payload) { if (!this.ms || this.dead) return; this.queue.push(payload); this.pump(); }
+  onData(payload) { if (!this.ms || this.dead) return; this.n.bytes += payload.length; this.queue.push(payload); this.pump(); }
   pump() {
     const sb = this.sb;
     if (!sb || sb.updating || !this.queue.length) return;
     let total = 0; for (const q of this.queue) total += q.length;
     const all = new Uint8Array(total); let o = 0; for (const q of this.queue) { all.set(q, o); o += q.length; }
     this.queue = [];
-    try { sb.appendBuffer(all); } catch (e) { if (this.onFail) this.onFail(); }
+    try { sb.appendBuffer(all); } catch (e) { this.n.appendErr++; this.lastErr = String(e); if (this.onFail) this.onFail(); }
   }
   chase() { // mantenerse cerca del vivo y no acumular memoria
     const v = this.video, sb = this.sb;
     if (!sb || !v.buffered.length) return;
     const start = v.buffered.start(0), end = v.buffered.end(v.buffered.length - 1), lag = end - v.currentTime;
-    if (v.currentTime < start || lag > 2.5) v.currentTime = Math.max(start, end - 0.35);
+    if (v.currentTime < start || lag > 2.5) { this.n.seek++; v.currentTime = Math.max(start, end - 0.35); }
     else v.playbackRate = lag > 1.2 ? 1.12 : 1;
     if (v.paused) v.play().catch(() => {});
     if (!sb.updating && v.currentTime - start > 25) { try { sb.remove(start, v.currentTime - 8); } catch (e) {} }
@@ -265,6 +275,12 @@ async function boot() {
     buildGrid(); startGrid();
   } catch (e) { grid.innerHTML = '<div class="state">No se pudo conectar con el servidor. Reintentando…</div>'; setTimeout(boot, 3000); }
 }
+setInterval(() => {
+  if (document.hidden) return;
+  const sinks = cur >= 0 ? [bigSink] : tiles.map((t) => t.sink);
+  const body = JSON.stringify({ ua: navigator.userAgent, mms: !!window.ManagedMediaSource, mse: !!window.MediaSource, view: cur >= 0 ? "una" : "grilla", size: innerWidth + "x" + innerHeight, s: sinks.map((x) => x.stats()) });
+  fetch("/api/diag", { method: "POST", headers: { "Content-Type": "application/json" }, body }).catch(() => {});
+}, 5000);
 setInterval(async () => { try { const i = await info(); if (version && i.version !== version) location.reload(); } catch (e) {} }, 60000);
 boot();
 </script>
