@@ -252,7 +252,7 @@ function waitFor(test, ms) {
 // /safari: misma página, pero al agregarla a la pantalla de inicio del iPhone abre dentro de Safari
 // (sin modo app). Ahí sí funciona la imagen flotante (PiP), que iOS no permite en apps web a pantalla completa.
 function safariVariant(data) {
-  return data.toString('utf8').replace(/^s*<meta name="(apple-)?mobile-web-app-capable"[^>]*>?
+  return data.toString('utf8').replace(/^[ 	]*<meta name="(apple-)?mobile-web-app-capable"[^>]*>?
 /gm, '').replace('manifest.webmanifest', 'manifest-safari.webmanifest');
 }
 const server = http.createServer(async (req, res) => {
