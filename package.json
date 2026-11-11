@@ -1,0 +1,13 @@
+{
+  "name": "esee-visor",
+  "version": "0.1.0",
+  "description": "Visor web local para DVR/NVR EseeCloud (Juan/kp2p): Fire TV, iPhone y PC",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

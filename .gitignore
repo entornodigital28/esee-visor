@@ -1,0 +1,8 @@
+# Nunca subir la clave del DVR
+config.json
+
+bin/
+capturas/
+node_modules/
+.claude/
+*.log

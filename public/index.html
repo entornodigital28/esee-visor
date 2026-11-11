@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cámaras">
+<meta name="theme-color" content="#0b0d10">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Cámaras</title>
+<style>
+  :root { --bg:#0b0d10; --tile:#14181d; --line:#262c34; --text:#e8ecf1; --dim:#8b96a3; --accent:#3ea6ff; --glass:rgba(12,15,19,.62); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font:15px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; overscroll-behavior:none; -webkit-user-select:none; user-select:none; }
+  video { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
+
+  #grid { position:fixed; inset:0; padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); display:grid; gap:8px; grid-template-columns:repeat(var(--cols,3),1fr); grid-auto-rows:1fr; overflow:auto; }
+  .tile { position:relative; background:var(--tile); border:2px solid var(--line); border-radius:10px; overflow:hidden; min-height:0; cursor:pointer; outline:none; aspect-ratio:auto; }
+  .tile.sel { border-color:var(--accent); box-shadow:0 0 0 3px rgba(62,166,255,.28); }
+  .tile .name, #title { position:absolute; left:8px; top:8px; padding:3px 9px; border-radius:6px; background:var(--glass); font-weight:600; font-size:13px; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  .state { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:13px; pointer-events:none; text-align:center; padding:12px; }
+  .state.hide { display:none; }
+  @media (orientation:portrait) and (max-width:700px) { #grid { --cols:1 !important; grid-auto-rows:auto; } .tile { aspect-ratio:16/9; } }
+
+  #single { position:fixed; inset:0; background:#000; display:none; }
+  #single.on { display:block; }
+  #title { left:max(12px,env(safe-area-inset-left)); top:max(12px,env(safe-area-inset-top)); font-size:15px; }
+  .ui { transition:opacity .25s; }
+  #single.idle .ui { opacity:0; pointer-events:none; }
+  .btn { background:var(--glass); color:var(--text); border:1px solid rgba(255,255,255,.16); border-radius:12px; font:600 15px system-ui,sans-serif; min-width:52px; height:52px; padding:0 14px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); touch-action:none; }
+  .btn:active, .btn.down { background:var(--accent); color:#001a33; }
+  .btn.on { border-color:var(--accent); color:var(--accent); }
+  #top { position:absolute; right:max(12px,env(safe-area-inset-right)); top:max(12px,env(safe-area-inset-top)); display:flex; gap:8px; }
+  #pad { position:absolute; right:max(16px,env(safe-area-inset-right)); bottom:max(16px,env(safe-area-inset-bottom)); display:grid; grid-template-columns:repeat(3,56px); grid-template-rows:repeat(3,56px); gap:6px; }
+  #pad .btn { width:56px; height:56px; min-width:0; padding:0; font-size:20px; }
+  #zoom { position:absolute; left:max(16px,env(safe-area-inset-left)); bottom:max(16px,env(safe-area-inset-bottom)); display:flex; gap:8px; align-items:center; }
+  #zoom span { color:var(--dim); font-size:12px; margin-right:2px; }
+  #hint { position:absolute; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); color:var(--dim); font-size:12px; background:var(--glass); padding:4px 10px; border-radius:6px; white-space:nowrap; }
+  @media (max-width:700px) { #hint { display:none; } }
+  #ver { position:fixed; right:10px; bottom:6px; color:#3b434d; font-size:10px; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<div id="single">
+  <video id="big" muted playsinline autoplay></video>
+  <div class="state" id="bigState">Conectando…</div>
+  <div id="title" class="ui"></div>
+  <div id="top" class="ui">
+    <button class="btn" id="hd">HD</button>
+    <button class="btn" id="back">Volver</button>
+  </div>
+  <div id="zoom" class="ui">
+    <span>Zoom</span>
+    <button class="btn" data-ptz="zoomOut">−</button>
+    <button class="btn" data-ptz="zoomIn">+</button>
+  </div>
+  <div id="pad" class="ui">
+    <span></span><button class="btn" data-ptz="up">▲</button><span></span>
+    <button class="btn" data-ptz="left">◀</button><span></span><button class="btn" data-ptz="right">▶</button>
+    <span></span><button class="btn" data-ptz="down">▼</button><span></span>
+  </div>
+  <div id="hint" class="ui">Flechas: mover · OK: calidad · +/−: zoom · Atrás: volver</div>
+</div>
+<div id="ver"></div>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const MS = window.ManagedMediaSource || window.MediaSource;
+
+// ---------- Reproductor: una pantalla de video ----------
+class Sink {
+  constructor(video, stateEl) { this.video = video; this.stateEl = stateEl; this.ms = null; this.sb = null; this.queue = []; this.onFail = null; }
+  say(t) { if (this.stateEl) { this.stateEl.textContent = t || ""; this.stateEl.classList.toggle("hide", !t); } }
+  teardown() {
+    this.ms = null; this.sb = null; this.queue = []; this.dead = false;
+    try { this.video.pause(); } catch (e) {}
+    if (this.url) { URL.revokeObjectURL(this.url); this.url = null; }
+    this.video.removeAttribute("src"); try { this.video.load(); } catch (e) {}
+  }
+  onMeta(meta) {
+    this.teardown();
+    const v = this.video, mime = `video/mp4; codecs="${meta.codec}"`;
+    if (!MS.isTypeSupported(mime)) { this.dead = true; this.say("Este dispositivo no reproduce " + meta.codec); return; }
+    const ms = this.ms = new MS();
+    if (window.ManagedMediaSource) v.disableRemotePlayback = true;
+    this.url = URL.createObjectURL(ms); v.src = this.url;
+    ms.addEventListener("sourceopen", () => {
+      if (this.ms !== ms) return;
+      try { this.sb = ms.addSourceBuffer(mime); } catch (e) { this.dead = true; this.say("No se pudo iniciar el video"); return; }
+      this.sb.addEventListener("updateend", () => { this.pump(); if (v.readyState >= 2) this.say(""); });
+      this.pump(); v.play().catch(() => {});
+    }, { once: true });
+  }
+  onData(payload) { if (!this.ms || this.dead) return; this.queue.push(payload); this.pump(); }
+  pump() {
+    const sb = this.sb;
+    if (!sb || sb.updating || !this.queue.length) return;
+    let total = 0; for (const q of this.queue) total += q.length;
+    const all = new Uint8Array(total); let o = 0; for (const q of this.queue) { all.set(q, o); o += q.length; }
+    this.queue = [];
+    try { sb.appendBuffer(all); } catch (e) { if (this.onFail) this.onFail(); }
+  }
+  chase() { // mantenerse cerca del vivo y no acumular memoria
+    const v = this.video, sb = this.sb;
+    if (!sb || !v.buffered.length) return;
+    const start = v.buffered.start(0), end = v.buffered.end(v.buffered.length - 1), lag = end - v.currentTime;
+    if (v.currentTime < start || lag > 2.5) v.currentTime = Math.max(start, end - 0.35);
+    else v.playbackRate = lag > 1.2 ? 1.12 : 1;
+    if (v.paused) v.play().catch(() => {});
+    if (!sb.updating && v.currentTime - start > 25) { try { sb.remove(start, v.currentTime - 8); } catch (e) {} }
+  }
+}
+
+// ---------- Conexión: una sola descarga trae todas las cámaras pedidas ----------
+class Conn {
+  constructor(specs, sinks) { this.specs = specs; this.sinks = sinks; this.alive = false; sinks.forEach((s) => { s.onFail = () => this.abort && this.abort.abort(); }); }
+  start() { if (this.alive) return; this.alive = true; this.sinks.forEach((s) => s.say("Conectando…")); this.run(); }
+  stop() {
+    this.alive = false; clearInterval(this.timer); clearTimeout(this.again);
+    if (this.abort) this.abort.abort();
+    this.sinks.forEach((s) => s.teardown());
+  }
+  async run() {
+    if (!MS) { // iPhone antiguo: sin MSE, usar HLS nativo (unos segundos de demora)
+      this.sinks.forEach((s, i) => {
+        const v = s.video; v.src = `/hls/${this.specs[i][0]}/${this.specs[i][1]}/index.m3u8`;
+        v.onplaying = () => s.say(""); v.onerror = () => { if (this.alive) setTimeout(() => { if (this.alive) { v.load(); v.play().catch(() => {}); } }, 2000); };
+        v.play().catch(() => {});
+      });
+      return;
+    }
+    this.abort = new AbortController();
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.sinks.forEach((s) => s.chase()), 700);
+    try {
+      const resp = await fetch("/live?s=" + this.specs.map((x) => x.join(":")).join(","), { signal: this.abort.signal, cache: "no-store" });
+      if (!resp.ok || !resp.body) throw new Error("sin respuesta");
+      const reader = resp.body.getReader();
+      let buf = new Uint8Array(0);
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (buf.length) { const nb = new Uint8Array(buf.length + value.length); nb.set(buf); nb.set(value, buf.length); buf = nb; } else buf = value;
+        let off = 0;
+        while (buf.length - off >= 6) {
+          const len = ((buf[off] << 24) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3]) >>> 0;
+          if (buf.length - off - 4 < len) break;
+          const type = buf[off + 4], sink = this.sinks[buf[off + 5]], payload = buf.slice(off + 6, off + 4 + len);
+          off += 4 + len;
+          if (!sink) continue;
+          if (type === 0) sink.onMeta(JSON.parse(new TextDecoder().decode(payload))); else sink.onData(payload);
+        }
+        buf = buf.subarray(off);
+      }
+    } catch (e) { /* cae a reintento */ }
+    clearInterval(this.timer);
+    if (!this.alive) return;
+    this.sinks.forEach((s) => s.say("Reconectando…"));
+    this.again = setTimeout(() => this.alive && this.run(), 1500);
+  }
+}
+
+// ---------- Estado ----------
+let cameras = [], tiles = [], sel = 0, cur = -1, hd = false, gridConn = null, bigConn = null, version = null, idleTimer = null;
+const grid = $('#grid'), single = $('#single'), bigSink = new Sink($('#big'), $('#bigState'));
+
+function cols() { return parseInt(getComputedStyle(grid).gridTemplateColumns.split(' ').length, 10) || 1; }
+function layout() { const n = cameras.length; grid.style.setProperty('--cols', n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4); }
+function select(i) { sel = Math.max(0, Math.min(tiles.length - 1, i)); tiles.forEach((t, k) => t.el.classList.toggle('sel', k === sel)); tiles[sel] && tiles[sel].el.scrollIntoView({ block: 'nearest' }); }
+
+function buildGrid() {
+  grid.innerHTML = ''; tiles = [];
+  cameras.forEach((c, i) => {
+    const el = document.createElement('div'); el.className = 'tile';
+    el.innerHTML = '<video muted playsinline autoplay></video><div class="state">Conectando…</div><div class="name"></div>';
+    el.querySelector('.name').textContent = c.name;
+    el.addEventListener('click', () => { select(i); openCam(i); });
+    grid.appendChild(el);
+    tiles.push({ el, sink: new Sink(el.querySelector('video'), el.querySelector('.state')) });
+  });
+  gridConn = new Conn(cameras.map((c) => [c.channel, 1]), tiles.map((t) => t.sink));
+  layout(); select(0);
+}
+function startGrid() { if (gridConn && cur < 0) gridConn.start(); }
+function stopGrid() { if (gridConn) gridConn.stop(); }
+
+function playBig() {
+  if (bigConn) bigConn.stop();
+  bigConn = new Conn([[cameras[cur].channel, hd ? 0 : 1]], [bigSink]);
+  bigConn.start();
+  $('#hd').classList.toggle('on', hd);
+}
+function openCam(i, push = true) {
+  cur = i; hd = false; stopGrid();
+  const c = cameras[i];
+  $('#title').textContent = c.name;
+  $('#pad').style.display = $('#zoom').style.display = c.ptz ? '' : 'none';
+  single.classList.add('on'); playBig(); wake();
+  if (push) history.pushState({ cam: i }, '');
+}
+function closeCam() {
+  if (cur < 0) return;
+  ptzStop(); if (bigConn) { bigConn.stop(); bigConn = null; }
+  single.classList.remove('on'); const was = cur; cur = -1; select(was); startGrid();
+}
+function goBack() { if (history.state && history.state.cam !== undefined) history.back(); else closeCam(); }
+window.addEventListener('popstate', () => closeCam());
+
+function wake() { single.classList.remove('idle'); clearTimeout(idleTimer); idleTimer = setTimeout(() => single.classList.add('idle'), 5000); }
+['pointermove', 'pointerdown', 'keydown'].forEach((e) => window.addEventListener(e, wake, { passive: true }));
+
+// ---------- Movimiento ----------
+let ptzActive = null;
+function ptzSend(action) {
+  if (cur < 0) return;
+  fetch('/api/ptz', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channel: cameras[cur].channel, action, speed: 4 }) }).catch(() => {});
+}
+function ptzStart(action) { if (ptzActive === action) return; ptzActive = action; ptzSend(action); }
+function ptzStop() { if (!ptzActive) return; ptzActive = null; ptzSend('stop'); }
+document.querySelectorAll('[data-ptz]').forEach((b) => {
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add('down'); ptzStart(b.dataset.ptz); });
+  const up = () => { b.classList.remove('down'); ptzStop(); };
+  b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up);
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+});
+$('#back').addEventListener('click', goBack);
+$('#hd').addEventListener('click', () => { hd = !hd; playBig(); });
+
+// ---------- Teclado / control remoto ----------
+const KEY_PTZ = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', '+': 'zoomIn', '=': 'zoomIn', '-': 'zoomOut', MediaFastForward: 'zoomIn', MediaRewind: 'zoomOut', PageUp: 'zoomIn', PageDown: 'zoomOut' };
+window.addEventListener('keydown', (e) => {
+  if (cur >= 0) {
+    if (KEY_PTZ[e.key]) { e.preventDefault(); if (cameras[cur].ptz) ptzStart(KEY_PTZ[e.key]); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.repeat) { hd = !hd; playBig(); } }
+    else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack' || e.key === 'BrowserBack') { e.preventDefault(); goBack(); }
+    else if (/^[1-9]$/.test(e.key) && cameras[+e.key - 1]) { openCam(+e.key - 1, false); }
+  } else {
+    const c = cols();
+    if (e.key === 'ArrowRight') select(sel + 1); else if (e.key === 'ArrowLeft') select(sel - 1);
+    else if (e.key === 'ArrowDown') select(Math.min(tiles.length - 1, sel + c)); else if (e.key === 'ArrowUp') select(sel - c >= 0 ? sel - c : sel);
+    else if (e.key === 'Enter' || e.key === ' ') openCam(sel);
+    else if (/^[1-9]$/.test(e.key) && cameras[+e.key - 1]) openCam(+e.key - 1);
+    else return;
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', (e) => { if (cur >= 0 && KEY_PTZ[e.key]) ptzStop(); });
+window.addEventListener('blur', ptzStop);
+
+// Pausar video cuando la página no se ve (ahorra batería y ancho de banda)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { ptzStop(); if (cur >= 0) { bigConn && bigConn.stop(); } else stopGrid(); }
+  else if (cur >= 0) playBig(); else startGrid();
+});
+
+// ---------- Arranque y actualización automática ----------
+async function info() { const r = await fetch('/api/info', { cache: 'no-store' }); return r.json(); }
+async function boot() {
+  try {
+    const i = await info(); version = i.version; cameras = i.cameras; $('#ver').textContent = 'v' + version;
+    buildGrid(); startGrid();
+  } catch (e) { grid.innerHTML = '<div class="state">No se pudo conectar con el servidor. Reintentando…</div>'; setTimeout(boot, 3000); }
+}
+setInterval(async () => { try { const i = await info(); if (version && i.version !== version) location.reload(); } catch (e) {} }, 60000);
+boot();
+</script>
+</body>
+</html>

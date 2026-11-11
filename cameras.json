@@ -1,0 +1,12 @@
+{
+  "port": 8080,
+  "cameras": [
+    { "channel": 0, "name": "Cámara 1", "ptz": true },
+    { "channel": 1, "name": "Cámara 2", "ptz": true },
+    { "channel": 2, "name": "Cámara 3", "ptz": true },
+    { "channel": 4, "name": "Cámara 5", "ptz": true },
+    { "channel": 5, "name": "Cámara 6", "ptz": true },
+    { "channel": 6, "name": "Cámara 7", "ptz": true },
+    { "channel": 7, "name": "Cámara 8", "ptz": true }
+  ]
+}
