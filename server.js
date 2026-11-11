@@ -384,9 +384,28 @@ const server = http.createServer(async (req, res) => {
       const start = Number(url.searchParams.get('start')), end = Number(url.searchParams.get('end'));
       if (!validChannel(ch) || !Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= start || end - start > 7200 || end > dvrNow()) return json(res, 400, { error: 'Tramo inválido (máximo 2 horas)' });
       const stamp = new Date(start * 1000).toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Disposition': `attachment; filename="camara-${ch}-${stamp}.mp4"`, 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
-      res.socket.setNoDelay(true);
-      replay(cfg, ch, start, res, log, end);
+      const tempFile = path.join(os.tmpdir(), 'esee-clip-' + crypto.randomBytes(16).toString('hex') + '.mp4');
+      const output = fs.createWriteStream(tempFile);
+      res.once('close', () => { if (!res.writableEnded) output.destroy(new Error('Descarga cancelada')); });
+      try {
+        await new Promise((resolve, reject) => {
+          output.once('finish', resolve);
+          output.once('error', reject);
+          output.once('close', () => { if (!output.writableFinished) reject(new Error('No se pudo preparar el video')); });
+          replay(cfg, ch, start, output, log, end);
+        });
+        const size = fs.statSync(tempFile).size;
+        res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': size, 'Content-Disposition': `attachment; filename="camara-${ch}-${stamp}.mp4"`, 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+        res.socket.setNoDelay(true);
+        const input = fs.createReadStream(tempFile);
+        input.once('error', (e) => { log('descarga de grabación:', e.message); res.destroy(e); });
+        input.once('close', () => fs.promises.unlink(tempFile).catch(() => {}));
+        input.pipe(res);
+      } catch (e) {
+        fs.promises.unlink(tempFile).catch(() => {});
+        if (!res.headersSent) return json(res, 502, { error: 'No se pudo preparar el tramo de video' });
+        res.destroy(e);
+      }
       return;
     }
 
