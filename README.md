@@ -29,6 +29,10 @@ Hace falta una computadora que quede encendida en la misma red que el DVR.
 
 Cerrá `iniciar.bat` y ejecutá `instalar-inicio.bat` una vez: el servidor queda corriendo oculto y arranca solo cada vez que iniciás sesión en Windows. Lo que imprime queda en `servidor.log`. Con `detener.bat` se detiene y con `quitar-inicio.bat` deja de arrancar solo.
 
+### Que arranque al encender la PC (sin iniciar sesión)
+
+Ejecutá `instalar-servicio.bat`. Pide permiso de administrador y la clave de Windows del usuario, y crea una tarea programada ("EseeVisor") que arranca con la PC, aunque nadie inicie sesión. Reemplaza al arranque de `instalar-inicio.bat`. Se quita con `quitar-servicio.bat`. Después de `detener.bat`, vuelve a arrancar con `schtasks /Run /TN EseeVisor` o reiniciando la PC.
+
 ## Uso
 
 Abrí esa dirección en el navegador del dispositivo.
