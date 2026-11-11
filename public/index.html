@@ -59,7 +59,8 @@
   #lock .btn { height:56px; padding:0 26px; font-size:17px; touch-action:manipulation; }
   #lockMsg { color:var(--dim); font-size:14px; min-height:1.4em; }
   #faceBar { position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:4; display:none; gap:8px; align-items:center; background:rgba(12,15,19,.92); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:8px 8px 8px 14px; font-size:14px; white-space:nowrap; }
-  #faceBar .btn { height:40px; font-size:14px; touch-action:manipulation; }
+  #faceBar .btn { height:40px; font-size:14px; touch-action:manipulation; white-space:nowrap; flex:none; }
+  #faceBar span { min-width:0; }
   #ver { position:fixed; right:max(10px,env(safe-area-inset-right)); bottom:max(6px,env(safe-area-inset-bottom)); color:#aeb8c4; font-size:12px; pointer-events:none; z-index:3; background:rgba(12,15,19,.75); padding:2px 7px; border-radius:6px; }
   #single.on ~ #faceChip, #single.on ~ #ver, #single.on ~ #faceBar { display:none !important; }
   #faceChip { position:fixed; left:max(10px,env(safe-area-inset-left)); bottom:max(6px,env(safe-area-inset-bottom)); z-index:3; display:none; background:rgba(12,15,19,.85); color:var(--accent); border:1px solid rgba(62,166,255,.5); border-radius:8px; font:600 12px system-ui,sans-serif; padding:5px 10px; cursor:pointer; touch-action:manipulation; }
@@ -760,8 +761,13 @@ function faceOffer(pinOn) { // ofrecer activar Face ID una vez, si el dispositiv
   $('#faceNo').onclick = () => { store.set('faceSkip', '1'); showBar(false); };
   $('#faceOn').onclick = async () => {
     const label = bar.querySelector('span'); label.style.color = ''; label.textContent = 'Registrando…';
-    try { await faceRegister(); label.textContent = 'Face ID activado'; chip.style.display = 'none'; setTimeout(() => { bar.style.display = 'none'; }, 1500); }
-    catch (e) {
+    const done = () => { label.textContent = 'Face ID activado'; chip.style.display = 'none'; setTimeout(() => { bar.style.display = 'none'; }, 1500); };
+    try { await faceRegister(); done(); }
+    catch (e0) {
+      let e = e0;
+      if (e0.name === 'InvalidStateError') { // este dispositivo ya tenía la llave guardada: usarla en vez de crear otra
+        try { await faceLogin(); store.set('faceId', '1'); sess.set('unlocked', '1'); return done(); } catch (e1) { e = e1; }
+      }
       // mostrar siempre el motivo, y avisarle al servidor para poder diagnosticarlo
       const why = e.name === 'NotAllowedError' ? 'cancelado o no permitido por el dispositivo (' + e.message + ')' : (e.name && e.name !== 'Error' ? e.name + ': ' : '') + e.message;
       bar.style.whiteSpace = 'normal'; bar.style.maxWidth = '92vw'; label.style.color = '#ff8a7a'; label.textContent = 'No se activó: ' + why;
