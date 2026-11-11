@@ -44,6 +44,17 @@ Abrí esa dirección en el navegador del dispositivo.
 
 Agregá `"pin": "1234"` (el número que quieras) en `config.json` y reiniciá el servidor. Cada dispositivo lo pide una sola vez.
 
+## Entrar con Face ID (o huella)
+
+Con un PIN configurado, cada dispositivo puede registrar una llave de acceso y entrar con Face ID en vez del PIN. El navegador solo lo permite en páginas HTTPS con nombre, no por IP. La forma simple es Tailscale:
+
+1. Instalá [Tailscale](https://tailscale.com/download) en la computadora del servidor y en el teléfono, con la misma cuenta.
+2. En la computadora del servidor ejecutá `tailscale serve --bg 8080`. Si HTTPS no está habilitado en tu red de Tailscale, el comando muestra un enlace para activarlo. Al terminar informa la dirección, del tipo `https://nombre-pc.tu-red.ts.net`.
+3. Abrí esa dirección en el teléfono, entrá con el PIN y tocá **Activar Face ID**.
+4. En iPhone: Compartir → "Agregar a inicio". Desde ese ícono la app pide la cara al abrir y vuelve a pedirla tras 5 minutos fuera.
+
+Las llaves registradas se guardan en `passkeys.json` (no se sube a GitHub). Para dar de baja un dispositivo, borrá su entrada de ese archivo y reiniciá.
+
 ## Seguridad
 
 - Sin PIN, cualquiera conectado a tu red puede ver y mover las cámaras desde la página.

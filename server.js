@@ -192,14 +192,46 @@ const recSearch = new RecSearch(cfg);
 
 // ---------- Acceso con PIN (opcional: "pin" en config.json) ----------
 const PIN = String(process.env.ESEE_PIN || cfg.pin || '');
-const SESSION = PIN ? crypto.createHmac('sha256', PIN + '|' + cfg.password).update('esee-visor').digest('hex') : '';
+const SECRET = PIN ? crypto.createHmac('sha256', PIN + '|' + cfg.password).update('esee-visor').digest() : null;
+const YEAR = 365 * 86400000, FACE_SESSION = 12 * 3600000; // con PIN dura un año; con Face ID, 12 horas
+function sessionCookie(ms) {
+  const exp = String(Date.now() + ms);
+  return `ev=${exp}.${crypto.createHmac('sha256', SECRET).update(exp).digest('hex')}; Path=/; Max-Age=${Math.floor(ms / 1000)}; HttpOnly; SameSite=Lax`;
+}
 const pinFails = new Map();
 function authed(req) {
   if (!PIN) return true;
-  const c = /(?:^|;\s*)ev=([0-9a-f]+)/.exec(req.headers.cookie || '');
-  return !!c && c[1].length === SESSION.length && crypto.timingSafeEqual(Buffer.from(c[1]), Buffer.from(SESSION));
+  const c = /(?:^|;\s*)ev=(\d{10,16})\.([0-9a-f]{64})(?:;|$)/.exec(req.headers.cookie || '');
+  if (!c || Number(c[1]) < Date.now()) return false;
+  return crypto.timingSafeEqual(Buffer.from(c[2], 'hex'), crypto.createHmac('sha256', SECRET).update(c[1]).digest());
 }
 async function readBody(req, max = 4000) { let b = ''; for await (const chunk of req) { b += chunk; if (b.length > max) break; } return b; }
+
+// ---------- Llaves de acceso (passkeys): entrar con Face ID / huella en vez del PIN ----------
+// Solo funcionan en páginas HTTPS con nombre (o en localhost). Se registran estando ya adentro con el PIN.
+const PASSKEYS_FILE = path.join(ROOT, 'passkeys.json');
+let passkeys = []; try { passkeys = JSON.parse(fs.readFileSync(PASSKEYS_FILE, 'utf8')); } catch { /* todavía no hay */ }
+const savePasskeys = () => fs.writeFileSync(PASSKEYS_FILE, JSON.stringify(passkeys, null, 2) + '\n');
+const challenges = new Map(); // desafío -> vencimiento
+const sha256 = (b) => crypto.createHash('sha256').update(b).digest();
+function reqHost(req) { return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim(); }
+const rpIdOf = (req) => reqHost(req).replace(/:\d+$/, '');
+function newChallenge() {
+  const now = Date.now(); for (const [k, v] of challenges) if (v < now) challenges.delete(k);
+  const c = crypto.randomBytes(32).toString('base64url'); challenges.set(c, now + 120000); return c;
+}
+// Valida lo que firma el navegador: tipo de operación, desafío vigente y que venga de esta misma dirección
+function checkClientData(req, b64, type) {
+  const raw = Buffer.from(String(b64 || ''), 'base64url');
+  let cd; try { cd = JSON.parse(raw.toString('utf8')); } catch { throw new Error('datos inválidos'); }
+  if (cd.type !== type) throw new Error('operación inesperada');
+  const exp = challenges.get(cd.challenge);
+  if (!exp || exp < Date.now()) throw new Error('el pedido venció, probá de nuevo');
+  challenges.delete(cd.challenge);
+  const host = reqHost(req), local = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host);
+  if (cd.origin !== 'https://' + host && !(local && cd.origin === 'http://' + host)) throw new Error('origen no permitido');
+  return raw;
+}
 
 const html = (res, code, text) => { res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(text); };
 
@@ -225,12 +257,53 @@ const server = http.createServer(async (req, res) => {
       let q = {}; try { q = JSON.parse(await readBody(req)); } catch { /* cuerpo inválido */ }
       if (PIN && String(q.pin) === PIN) {
         pinFails.delete(ip);
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': `ev=${SESSION}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax` });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookie(YEAR) });
         return res.end('{"ok":true}');
       }
       const n = (f && Date.now() < f.until ? f.n : 0) + 1; pinFails.set(ip, { n, until: Date.now() + 60000 });
       return json(res, 401, { error: 'PIN incorrecto' });
     }
+    // Face ID: desafío (público), entrar (público) y registrar (solo ya adentro)
+    if (p === '/api/passkey/challenge') {
+      const rpId = rpIdOf(req);
+      return json(res, 200, { challenge: newChallenge(), rpId, ids: passkeys.filter((k) => k.rpId === rpId).map((k) => k.id) });
+    }
+    if (p === '/api/passkey/login' && req.method === 'POST') {
+      if (!PIN) return json(res, 400, { error: 'No hay PIN configurado' });
+      try {
+        const q = JSON.parse(await readBody(req, 20000));
+        const key = passkeys.find((k) => k.id === q.id && k.rpId === rpIdOf(req));
+        if (!key) throw new Error('este dispositivo no está registrado');
+        const cdRaw = checkClientData(req, q.clientDataJSON, 'webauthn.get');
+        const ad = Buffer.from(String(q.authenticatorData || ''), 'base64url');
+        if (ad.length < 37 || !ad.subarray(0, 32).equals(sha256(key.rpId))) throw new Error('respuesta de otra dirección');
+        if ((ad[32] & 0x05) !== 0x05) throw new Error('falta la verificación biométrica');
+        const ok = crypto.verify('sha256', Buffer.concat([ad, sha256(cdRaw)]), { key: Buffer.from(key.publicKey, 'base64url'), format: 'der', type: 'spki' }, Buffer.from(String(q.signature || ''), 'base64url'));
+        if (!ok) throw new Error('firma inválida');
+        key.lastUsed = new Date().toISOString(); savePasskeys();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookie(FACE_SESSION) });
+        return res.end('{"ok":true}');
+      } catch (e) { return json(res, 401, { error: e.message }); }
+    }
+    if (p === '/api/passkey/register' && req.method === 'POST') {
+      if (!PIN || !authed(req)) return json(res, 401, { error: 'Primero entrá con el PIN' });
+      try {
+        const q = JSON.parse(await readBody(req, 20000));
+        checkClientData(req, q.clientDataJSON, 'webauthn.create');
+        if (q.alg !== -7 && q.alg !== -257) throw new Error('tipo de llave no soportado');
+        const pub = Buffer.from(String(q.publicKey || ''), 'base64url');
+        crypto.createPublicKey({ key: pub, format: 'der', type: 'spki' }); // valida el formato
+        if (!/^[A-Za-z0-9_-]{16,400}$/.test(String(q.id))) throw new Error('identificador inválido');
+        passkeys = passkeys.filter((k) => k.id !== q.id);
+        passkeys.push({ id: q.id, rpId: rpIdOf(req), publicKey: pub.toString('base64url'), alg: q.alg, name: String(q.name || 'dispositivo').slice(0, 60), created: new Date().toISOString() });
+        savePasskeys();
+        log('Face ID registrado para', passkeys[passkeys.length - 1].name);
+        // desde ahora este dispositivo usa sesión corta: la cara se pide de nuevo al vencer
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookie(FACE_SESSION) });
+        return res.end('{"ok":true}');
+      } catch (e) { return json(res, 400, { error: e.message }); }
+    }
+
     if (!authed(req)) {
       if (p === '/' || p === '/index.html') return fs.readFile(path.join(ROOT, 'public', 'login.html'), (err, data) => html(res, err ? 500 : 200, err ? 'error' : data));
       if (p !== '/manifest.webmanifest') return json(res, 401, { error: 'Hace falta el PIN' });

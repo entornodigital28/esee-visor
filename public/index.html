@@ -52,6 +52,12 @@
   #tl { width:100%; height:58px; display:block; border-radius:8px; touch-action:none; cursor:pointer; }
   #recKey { color:var(--dim); font-size:11px; }
   #recKey i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 10px; vertical-align:-1px; }
+  #lock { position:fixed; inset:0; background:var(--bg); z-index:20; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:24px; text-align:center; }
+  #lock.on { display:flex; }
+  #lock .btn { height:56px; padding:0 26px; font-size:17px; touch-action:manipulation; }
+  #lockMsg { color:var(--dim); font-size:14px; min-height:1.4em; }
+  #faceBar { position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:4; display:none; gap:8px; align-items:center; background:rgba(12,15,19,.92); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:8px 8px 8px 14px; font-size:14px; white-space:nowrap; }
+  #faceBar .btn { height:40px; font-size:14px; touch-action:manipulation; }
   #ver { position:fixed; right:10px; bottom:6px; color:#3b434d; font-size:10px; pointer-events:none; }
 </style>
 </head>
@@ -100,6 +106,8 @@
   </div>
   <div id="hint" class="ui">Flechas: mover · OK: calidad · +/−: zoom · Atrás: volver</div>
 </div>
+<div id="faceBar"><span>Entrar con tu cara</span><button class="btn on" id="faceOn">Activar Face ID</button><button class="btn" id="faceNo">Ahora no</button></div>
+<div id="lock"><div style="font-size:20px;font-weight:600">Cámaras</div><button class="btn on" id="lockBtn">Desbloquear</button><div id="lockMsg"></div></div>
 <div id="ver"></div>
 
 <script>
@@ -627,12 +635,63 @@ function recKey(e) { // teclado / control remoto en modo grabaciones
   e.preventDefault();
 }
 
+// ---------- Face ID / huella (llave de acceso) ----------
+const b64u = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+const faceOK = !!(window.isSecureContext && window.PublicKeyCredential && navigator.credentials);
+async function faceLogin() { // pide la cara y abre sesión; devuelve true si entró
+  const ch = await (await fetch('/api/passkey/challenge', { cache: 'no-store' })).json();
+  if (!ch.ids.length) throw new Error('Este dispositivo todavía no tiene Face ID activado');
+  const cred = await navigator.credentials.get({ publicKey: { challenge: unb64u(ch.challenge), rpId: ch.rpId, allowCredentials: ch.ids.map((id) => ({ type: 'public-key', id: unb64u(id) })), userVerification: 'required', timeout: 60000 } });
+  const r = await fetch('/api/passkey/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b64u(cred.rawId), clientDataJSON: b64u(cred.response.clientDataJSON), authenticatorData: b64u(cred.response.authenticatorData), signature: b64u(cred.response.signature) }) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo entrar');
+  return true;
+}
+const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+const sess = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }, del(k) { try { sessionStorage.removeItem(k); } catch (e) {} } };
+async function faceRegister() { // crea la llave en este dispositivo y la guarda en el servidor
+  const ch = await (await fetch('/api/passkey/challenge', { cache: 'no-store' })).json();
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: unb64u(ch.challenge), rp: { name: 'Cámaras', id: ch.rpId },
+    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'camaras', displayName: 'Cámaras' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    excludeCredentials: ch.ids.map((id) => ({ type: 'public-key', id: unb64u(id) })),
+    authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', userVerification: 'required' }, attestation: 'none', timeout: 60000 } });
+  const name = /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone / iPad' : /Android/.test(navigator.userAgent) ? 'Android' : 'computadora';
+  const r = await fetch('/api/passkey/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b64u(cred.rawId), publicKey: b64u(cred.response.getPublicKey()), alg: cred.response.getPublicKeyAlgorithm(), clientDataJSON: b64u(cred.response.clientDataJSON), name }) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo registrar');
+  store.set('faceId', b64u(cred.rawId)); sess.set('unlocked', '1');
+}
+function faceOffer(pinOn) { // ofrecer activar Face ID una vez, si el dispositivo puede
+  if (!pinOn || !faceOK || store.get('faceId') || store.get('faceSkip')) return;
+  const bar = $('#faceBar'); bar.style.display = 'flex';
+  $('#faceNo').onclick = () => { store.set('faceSkip', '1'); bar.style.display = 'none'; };
+  $('#faceOn').onclick = async () => {
+    try { await faceRegister(); bar.style.display = 'none'; }
+    catch (e) { if (e.name !== 'NotAllowedError') { bar.querySelector('span').textContent = e.message; } }
+  };
+}
+// Bloqueo: con Face ID activado, la app pide la cara cada vez que se abre
+let hiddenAt = 0;
+function lockNeeded() { return faceOK && !!store.get('faceId') && sess.get('unlocked') !== '1'; }
+async function unlock() {
+  const msg = $('#lockMsg'); msg.textContent = '';
+  try { await faceLogin(); sess.set('unlocked', '1'); $('#lock').classList.remove('on'); boot(); }
+  catch (e) { msg.textContent = e.name === 'NotAllowedError' ? 'Tocá Desbloquear para intentar de nuevo' : e.message; }
+}
+$('#lockBtn').addEventListener('click', unlock);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  // al volver después de 5 minutos fuera, pedir la cara otra vez (salvo que haya quedado en imagen flotante)
+  if (store.get('faceId') && hiddenAt && Date.now() - hiddenAt > 300000 && !inPip()) { sess.del('unlocked'); location.reload(); }
+});
+
 // ---------- Arranque y actualización automática ----------
 async function info() { const r = await fetch('/api/info', { cache: 'no-store' }); if (r.status === 401) { location.reload(); throw new Error('pin'); } return r.json(); }
 async function boot() {
   try {
     const i = await info(); version = i.version; cameras = i.cameras; $('#ver').textContent = 'v' + version;
-    buildGrid(); startGrid();
+    buildGrid(); startGrid(); faceOffer(i.pin);
   } catch (e) { grid.innerHTML = '<div class="state">No se pudo conectar con el servidor. Reintentando…</div>'; setTimeout(boot, 3000); }
 }
 setInterval(() => {
@@ -642,7 +701,7 @@ setInterval(() => {
   fetch("/api/diag", { method: "POST", headers: { "Content-Type": "application/json" }, body }).catch(() => {});
 }, 5000);
 setInterval(async () => { try { const i = await info(); if (version && i.version !== version) location.reload(); } catch (e) {} }, 60000);
-boot();
+if (lockNeeded()) { $('#lock').classList.add('on'); unlock(); } else boot();
 </script>
 </body>
 </html>

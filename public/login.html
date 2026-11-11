@@ -13,17 +13,42 @@
   input { font:600 26px ui-monospace,Menlo,Consolas,monospace; letter-spacing:.3em; text-align:center; width:220px; padding:12px; border-radius:12px; border:1px solid #262c34; background:#14181d; color:#e8ecf1; outline:none; }
   input:focus { border-color:#3ea6ff; }
   button { font:600 16px system-ui,sans-serif; width:220px; padding:13px; border-radius:12px; border:0; background:#3ea6ff; color:#001a33; cursor:pointer; }
-  #e { color:#ff8a7a; min-height:1.4em; font-size:14px; }
+  #e { color:#ff8a7a; min-height:1.4em; font-size:14px; text-align:center; }
+  #face { background:#14181d; color:#e8ecf1; border:1px solid #3ea6ff; display:none; }
+  .or { color:#8b96a3; font-size:13px; display:none; }
 </style>
 </head>
 <body>
 <form id="f">
   <h1>Cámaras</h1>
+  <button type="button" id="face">Entrar con Face ID</button>
+  <div class="or" id="or">o con el PIN</div>
   <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" autofocus>
   <button>Entrar</button>
   <div id="e"></div>
 </form>
 <script>
+// ---------- Face ID / huella (llave de acceso) ----------
+const b64u = (buf) => btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+const faceOK = !!(window.isSecureContext && window.PublicKeyCredential && navigator.credentials);
+async function faceLogin() { // pide la cara y abre sesión; devuelve true si entró
+  const ch = await (await fetch('/api/passkey/challenge', { cache: 'no-store' })).json();
+  if (!ch.ids.length) throw new Error('Este dispositivo todavía no tiene Face ID activado');
+  const cred = await navigator.credentials.get({ publicKey: { challenge: unb64u(ch.challenge), rpId: ch.rpId, allowCredentials: ch.ids.map((id) => ({ type: 'public-key', id: unb64u(id) })), userVerification: 'required', timeout: 60000 } });
+  const r = await fetch('/api/passkey/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b64u(cred.rawId), clientDataJSON: b64u(cred.response.clientDataJSON), authenticatorData: b64u(cred.response.authenticatorData), signature: b64u(cred.response.signature) }) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo entrar');
+  return true;
+}
+
+(async () => { // si este dispositivo tiene Face ID activado, pedirlo apenas abre
+  if (!faceOK) return;
+  let has = false; try { has = !!localStorage.getItem('faceId'); } catch (e) {}
+  const btn = document.getElementById('face'), err = document.getElementById('e');
+  const go = async () => { err.textContent = ''; try { if (await faceLogin()) { try { sessionStorage.setItem('unlocked', '1'); } catch (z) {} location.reload(); } } catch (x) { if (x.name !== 'NotAllowedError') err.textContent = x.message; } };
+  btn.addEventListener('click', go);
+  if (has) { btn.style.display = ''; document.getElementById('or').style.display = ''; go(); }
+})();
 document.getElementById('f').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const e = document.getElementById('e'); e.textContent = '';
