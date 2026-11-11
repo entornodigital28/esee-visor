@@ -660,7 +660,7 @@ async function faceRegister() { // crea la llave en este dispositivo y la guarda
     authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', userVerification: 'required' }, attestation: 'none', timeout: 60000 } });
   const name = /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone / iPad' : /Android/.test(navigator.userAgent) ? 'Android' : 'computadora';
   const r = await fetch('/api/passkey/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b64u(cred.rawId), publicKey: b64u(cred.response.getPublicKey()), alg: cred.response.getPublicKeyAlgorithm(), clientDataJSON: b64u(cred.response.clientDataJSON), name }) });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo registrar');
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'el servidor respondió ' + r.status);
   store.set('faceId', b64u(cred.rawId)); sess.set('unlocked', '1');
 }
 function faceOffer(pinOn) { // ofrecer activar Face ID una vez, si el dispositivo puede
@@ -668,8 +668,14 @@ function faceOffer(pinOn) { // ofrecer activar Face ID una vez, si el dispositiv
   const bar = $('#faceBar'); bar.style.display = 'flex';
   $('#faceNo').onclick = () => { store.set('faceSkip', '1'); bar.style.display = 'none'; };
   $('#faceOn').onclick = async () => {
-    try { await faceRegister(); bar.style.display = 'none'; }
-    catch (e) { if (e.name !== 'NotAllowedError') { bar.querySelector('span').textContent = e.message; } }
+    const label = bar.querySelector('span'); label.style.color = ''; label.textContent = 'Registrando…';
+    try { await faceRegister(); label.textContent = 'Face ID activado'; setTimeout(() => { bar.style.display = 'none'; }, 1500); }
+    catch (e) {
+      // mostrar siempre el motivo, y avisarle al servidor para poder diagnosticarlo
+      const why = e.name === 'NotAllowedError' ? 'cancelado o no permitido por el dispositivo (' + e.message + ')' : (e.name && e.name !== 'Error' ? e.name + ': ' : '') + e.message;
+      bar.style.whiteSpace = 'normal'; bar.style.maxWidth = '92vw'; label.style.color = '#ff8a7a'; label.textContent = 'No se activó: ' + why;
+      fetch('/api/diag', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ faceError: why, ua: navigator.userAgent, origin: location.origin }) }).catch(() => {});
+    }
   };
 }
 // Bloqueo: con Face ID activado, la app pide la cara cada vez que se abre

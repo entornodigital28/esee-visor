@@ -228,8 +228,11 @@ function checkClientData(req, b64, type) {
   const exp = challenges.get(cd.challenge);
   if (!exp || exp < Date.now()) throw new Error('el pedido venció, probá de nuevo');
   challenges.delete(cd.challenge);
-  const host = reqHost(req), local = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host);
-  if (cd.origin !== 'https://' + host && !(local && cd.origin === 'http://' + host)) throw new Error('origen no permitido');
+  // el origen debe ser esta misma dirección (por nombre; el puerto puede diferir detrás de un proxy como Tailscale)
+  let o; try { o = new URL(cd.origin); } catch { throw new Error('origen inválido'); }
+  const names = [req.headers['x-forwarded-host'], req.headers.host].filter(Boolean).map((h) => String(h).split(',')[0].trim().replace(/:\d+$/, '').toLowerCase());
+  const local = o.hostname === 'localhost' || o.hostname === '127.0.0.1';
+  if (!names.includes(o.hostname.toLowerCase()) || (o.protocol !== 'https:' && !local)) throw new Error(`origen no permitido (${cd.origin}; el servidor se ve como ${names.join(' / ')})`);
   return raw;
 }
 
@@ -283,10 +286,10 @@ const server = http.createServer(async (req, res) => {
         key.lastUsed = new Date().toISOString(); savePasskeys();
         res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookie(FACE_SESSION) });
         return res.end('{"ok":true}');
-      } catch (e) { return json(res, 401, { error: e.message }); }
+      } catch (e) { log('Face ID: ingreso rechazado:', e.message); return json(res, 401, { error: e.message }); }
     }
     if (p === '/api/passkey/register' && req.method === 'POST') {
-      if (!PIN || !authed(req)) return json(res, 401, { error: 'Primero entrá con el PIN' });
+      if (!PIN || !authed(req)) { log('Face ID: registro sin sesión'); return json(res, 401, { error: 'La sesión venció: recargá, entrá con el PIN y probá de nuevo' }); }
       try {
         const q = JSON.parse(await readBody(req, 20000));
         checkClientData(req, q.clientDataJSON, 'webauthn.create');
@@ -301,7 +304,7 @@ const server = http.createServer(async (req, res) => {
         // desde ahora este dispositivo usa sesión corta: la cara se pide de nuevo al vencer
         res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': sessionCookie(FACE_SESSION) });
         return res.end('{"ok":true}');
-      } catch (e) { return json(res, 400, { error: e.message }); }
+      } catch (e) { log('Face ID: no se pudo registrar:', e.message); return json(res, 400, { error: e.message }); }
     }
 
     if (!authed(req)) {
