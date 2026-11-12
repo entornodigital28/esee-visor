@@ -34,14 +34,22 @@ const clipJobs = new Map();
 // si hay cambios, el servidor se cierra y iniciar.bat baja la versión nueva y lo reinicia.
 // Las pantallas abiertas se recargan solas al ver que cambió la versión.
 if (process.env.ESEE_AUTOUPDATE === '1') {
-  setInterval(() => {
-    execFile('git', ['fetch', '--quiet'], { cwd: ROOT, timeout: 60000 }, (err) => {
-      if (err) return;
+  let lastErr = '';
+  const check = () => {
+    execFile('git', ['fetch', '--quiet'], { cwd: ROOT, timeout: 60000, env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }) }, (err, out, stderr) => {
+      if (err) { // dejar constancia en el log (una vez por tipo de error) para poder diagnosticarlo
+        const msg = String(stderr || err.message).trim().split('\n').pop();
+        if (msg !== lastErr) { lastErr = msg; log('no pude consultar GitHub para actualizar:', msg, '| usuario:', os.userInfo().username); }
+        return;
+      }
+      if (lastErr) { lastErr = ''; log('la consulta a GitHub volvió a funcionar'); }
       try {
         if (git('rev-parse', 'HEAD') !== git('rev-parse', '@{u}')) { log('hay una versión nueva, reinicio para actualizar'); process.exit(0); }
-      } catch { /* sin rama remota */ }
+      } catch (e) { log('no pude comparar versiones:', e.message); }
     });
-  }, 10 * 60 * 1000);
+  };
+  setTimeout(check, 60 * 1000); // primera consulta al minuto, para ver pronto si falla
+  setInterval(check, 10 * 60 * 1000);
 }
 
 const IDLE_MS = 12000;      // cuánto sigue abierto un canal sin espectadores
